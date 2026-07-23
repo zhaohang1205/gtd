@@ -66,4 +66,6 @@ pub enum Command {
     Review,
     /// List all tags grouped by category
     Tags,
+    /// Launch the interactive TUI
+    Tui,
 }

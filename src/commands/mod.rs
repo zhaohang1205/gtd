@@ -67,6 +67,7 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
         Command::Tree => project::tree(conn),
         Command::Review => project::review(conn),
         Command::Tags => tagging::list(conn),
+        Command::Tui => crate::tui::run(conn),
     }
 }
 
