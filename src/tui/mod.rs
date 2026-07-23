@@ -215,6 +215,7 @@ impl<'a> App<'a> {
     fn set_view(&mut self, v: View) {
         self.view = v;
         self.selected = 0;
+        self.status_message.clear();
         if let Err(e) = self.refresh() {
             self.status_message = format!("err: {}", e);
         }
@@ -344,9 +345,8 @@ impl<'a> App<'a> {
                             tag_names: vec![],
                         },
                     )?;
+                    self.set_view(View::Inbox);
                     self.status_message = format!("captured {}", &t.id[..8]);
-                    self.refresh()?;
-                    self.load_detail();
                 }
             }
             Mode::Tagging => {
@@ -387,9 +387,14 @@ impl<'a> App<'a> {
     fn render(&mut self, f: &mut ratatui::Frame) {
         self.list_state.select(Some(self.selected));
         let size = f.area();
+        let footer_h = if self.show_help {
+            Constraint::Length(5)
+        } else {
+            Constraint::Length(3)
+        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(0), Constraint::Length(2)])
+            .constraints([Constraint::Length(2), Constraint::Min(0), footer_h])
             .split(size);
 
         let header = Line::from(vec![
@@ -563,4 +568,189 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrate;
+    use crate::repo::tasks::{self, CaptureInput};
+    use ratatui::backend::TestBackend;
+    use std::io::Write;
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty())
+    }
+    fn kc(k: KeyCode) -> KeyEvent {
+        KeyEvent::new(k, KeyModifiers::empty())
+    }
+
+    fn seed(conn: &Connection) {
+        let proj = tasks::create_capture(
+            conn,
+            &CaptureInput {
+                title: "Website Redesign".into(),
+                kind: "project".into(),
+                parent_id: None,
+                status: "next".into(),
+                due_at: None,
+                tag_names: vec![],
+            },
+        )
+        .unwrap();
+        let mk = |title: &str, kind: &str, parent: Option<&str>, status: &str, tags: &[&str]| {
+            tasks::create_capture(
+                conn,
+                &CaptureInput {
+                    title: title.into(),
+                    kind: kind.into(),
+                    parent_id: parent.map(|s| s.to_string()),
+                    status: status.into(),
+                    due_at: None,
+                    tag_names: tags.iter().map(|s| s.to_string()).collect(),
+                },
+            )
+            .unwrap();
+        };
+        mk("Write homepage copy", "action", Some(&proj.id), "inbox", &["work", "p1"]);
+        mk("Buy groceries", "action", None, "inbox", &["home", "errands"]);
+        mk("Read Rust book", "action", None, "next", &["learning"]);
+        mk("Pay taxes", "action", None, "waiting", &["work", "p2"]);
+        mk("Plan vacation", "action", None, "someday", &["home"]);
+        mk("Finish report", "action", None, "done", &[]);
+    }
+
+    fn snap(term: &Terminal<TestBackend>) -> String {
+        let buf = term.backend().buffer();
+        let w = buf.area().width as usize;
+        let h = buf.area().height as usize;
+        let content = buf.content();
+        let mut s = String::with_capacity(w * h * 2);
+        for y in 0..h {
+            for x in 0..w {
+                s.push_str(content[y * w + x].symbol());
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    #[test]
+    fn drive_tui() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        seed(&conn);
+        let mut app = App::new(&conn).unwrap();
+        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut out = std::fs::File::create("/tmp/gtp_tui_frames.txt").unwrap();
+        let frame = |label: &str, term: &mut Terminal<TestBackend>, app: &mut App, out: &mut std::fs::File| -> String {
+            term.draw(|f| app.render(f)).unwrap();
+            let s = snap(term);
+            writeln!(out, "===== {label} =====").unwrap();
+            out.write_all(s.as_bytes()).unwrap();
+            s
+        };
+
+        let s = frame("1-initial-inbox", &mut term, &mut app, &mut out);
+        assert!(s.contains("Inbox"), "header should show Inbox");
+        assert!(s.contains("Buy groceries"), "inbox should list seeded task");
+
+        app.handle_key(key('j')).unwrap();
+        frame("2-nav-down", &mut term, &mut app, &mut out);
+        app.handle_key(kc(KeyCode::Down)).unwrap();
+        frame("3-nav-down2", &mut term, &mut app, &mut out);
+        app.handle_key(key('k')).unwrap();
+        frame("4-nav-up", &mut term, &mut app, &mut out);
+
+        // capture flow
+        app.handle_key(key('a')).unwrap();
+        let s = frame("5-capture-mode", &mut term, &mut app, &mut out);
+        assert!(s.contains("New task:"), "capture mode should show prompt");
+        for c in "Buy milk".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        frame("6-capture-typing", &mut term, &mut app, &mut out);
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = frame("7-after-capture", &mut term, &mut app, &mut out);
+        assert!(s.contains("Buy milk"), "newly captured task should appear");
+        assert!(s.contains("· Inbox"), "capture should auto-jump to Inbox view");
+
+        // Enter -> next
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        frame("8-to-next", &mut term, &mut app, &mut out);
+
+        for (d, lbl) in [('2', "9-next"), ('3', "10-waiting"), ('4', "11-scheduled"), ('5', "12-someday"), ('6', "13-reference"), ('7', "14-done"), ('1', "15-back-inbox")] {
+            app.handle_key(key(d)).unwrap();
+            let s = frame(lbl, &mut term, &mut app, &mut out);
+            let expect = match d {
+                '2' => "Next", '3' => "Waiting", '4' => "Scheduled", '5' => "Someday",
+                '6' => "Reference", '7' => "Done", _ => "Inbox",
+            };
+            assert!(s.contains(expect), "view {lbl} should show header {expect}");
+        }
+
+        app.handle_key(key('p')).unwrap();
+        let s = frame("16-projects", &mut term, &mut app, &mut out);
+        assert!(s.contains("Website Redesign"), "projects view should show project");
+
+        app.handle_key(key('r')).unwrap();
+        let s = frame("17-review", &mut term, &mut app, &mut out);
+        assert!(s.contains("Weekly Review"), "review view header");
+
+        // capture from a non-inbox view should auto-jump back to Inbox
+        app.handle_key(key('3')).unwrap();
+        frame("17b-waiting", &mut term, &mut app, &mut out);
+        app.handle_key(key('a')).unwrap();
+        for c in "Captured from waiting".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = frame("17c-capture-jump", &mut term, &mut app, &mut out);
+        assert!(s.contains("· Inbox"), "capture from waiting should jump to Inbox");
+        assert!(s.contains("Captured from waiting"), "jumped view should list the new task");
+
+        // back to inbox, tag the first task
+        app.handle_key(key('1')).unwrap();
+        app.handle_key(key('t')).unwrap();
+        let s = frame("18-tag-mode", &mut term, &mut app, &mut out);
+        assert!(s.contains("Add tag:"), "tag mode prompt");
+        for c in "urgent".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = frame("19-after-tag", &mut term, &mut app, &mut out);
+        assert!(s.contains("urgent"), "detail should show added tag");
+
+        // schedule the first task
+        app.handle_key(key('c')).unwrap();
+        let s = frame("20-schedule-mode", &mut term, &mut app, &mut out);
+        assert!(s.contains("Schedule"), "schedule prompt");
+        for c in "+2h".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = frame("21-after-schedule", &mut term, &mut app, &mut out);
+        assert!(s.contains("sched"), "detail should show scheduled time");
+
+        // now it should leave inbox
+        app.handle_key(key('1')).unwrap();
+        let s = frame("22-inbox-after-schedule", &mut term, &mut app, &mut out);
+        assert!(!s.contains("Write homepage copy"), "scheduled task should leave inbox");
+
+        // archive from scheduled view
+        app.handle_key(key('4')).unwrap();
+        app.handle_key(key('A')).unwrap();
+        frame("23-after-archive", &mut term, &mut app, &mut out);
+
+        // help toggle
+        app.handle_key(key('?')).unwrap();
+        let s = frame("24-help", &mut term, &mut app, &mut out);
+        assert!(s.contains("navigate"), "help text should show");
+        app.handle_key(key('?')).unwrap();
+        frame("25-help-off", &mut term, &mut app, &mut out);
+
+        // quit
+        app.handle_key(key('q')).unwrap();
+        assert!(app.should_quit, "q should set quit flag");
+    }
 }
