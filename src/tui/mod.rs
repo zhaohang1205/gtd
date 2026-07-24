@@ -113,6 +113,7 @@ impl View {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
+    EditingTitle,
     Capturing,
     Tagging,
     SchedulingCalendar,
@@ -432,6 +433,12 @@ impl<'a> App<'a> {
                 self.mode = Mode::Capturing;
                 self.input.clear();
             }
+            KeyCode::Char('e') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    self.mode = Mode::EditingTitle;
+                    self.input = row.title.clone();
+                }
+            }
             KeyCode::Char('x') => self.act_on_selected(task::Status::Done)?,
             KeyCode::Char('w') => {
                 self.mode = Mode::WaitingWho;
@@ -516,6 +523,17 @@ impl<'a> App<'a> {
 
     fn confirm_input(&mut self, mode: Mode, input: &str) -> Result<()> {
         match mode {
+            Mode::EditingTitle => {
+                let title = input.trim();
+                if !title.is_empty() {
+                    if let Some(row) = self.items.get(self.selected).cloned() {
+                        tasks::rename(self.conn, &row.id, title)?;
+                        self.status_message = format!("renamed {}", &row.id[..8]);
+                        self.refresh()?;
+                        self.load_detail();
+                    }
+                }
+            }
             Mode::Capturing => {
                 let title = input.trim();
                 if !title.is_empty() {
@@ -774,6 +792,7 @@ impl<'a> App<'a> {
 
         if self.mode != Mode::Normal && self.mode != Mode::SchedulingCalendar {
             let title = match self.mode {
+                Mode::EditingTitle => " Edit title ",
                 Mode::Capturing => " New task ",
                 Mode::Tagging => " Add tag (Hints: home, work, errands...) ",
                 Mode::SchedulingTimeRRule => " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=DAILY) ",
@@ -808,6 +827,7 @@ impl<'a> App<'a> {
             ("j/k", "上下移动"),
             ("P", "番茄钟"),
             ("a", "收集任务"),
+            ("e", "编辑标题"),
             ("w", "标记等待"),
             ("s", "标记将来"),
             ("c", "排期时间"),
