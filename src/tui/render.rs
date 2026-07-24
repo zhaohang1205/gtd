@@ -106,7 +106,7 @@ impl<'a> AppRender for App<'a> {
             let title = match self.mode {
                 Mode::Search => " Search Tasks (Title / Notes) ",
                 Mode::EditingTitle => " Edit title ",
-                Mode::Capturing => " New task ",
+                Mode::Capturing => " 快速录入 (支持自然语言) ",
                 Mode::Tagging => " Add tag (Hints: home, work, errands...) ",
                 Mode::SchedulingTimeRRule => " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=DAILY) ",
                 Mode::SchedulingCalendar => "", // Not reached
@@ -117,11 +117,21 @@ impl<'a> AppRender for App<'a> {
                 Mode::ChecklistAdding => " 新增检查单 ",
                 Mode::Normal => "",
             };
-            let text = format!(" {}_", self.input);
-            let area = self.centered_rect(50, 3, size);
+            
+            let mut text_lines = vec![Line::from(format!(" {}_", self.input))];
+            let mut height = 3;
+            let width = if self.mode == Mode::Capturing { 70 } else { 50 };
+
+            if self.mode == Mode::Capturing {
+                text_lines.push(Line::from(""));
+                text_lines.push(Line::from(Span::styled(" [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)", Style::default().fg(Color::DarkGray))));
+                height = 5;
+            }
+
+            let area = self.centered_rect(width, height, size);
             f.render_widget(ratatui::widgets::Clear, area);
             let block = Block::default().title(title).borders(Borders::ALL).border_style(Style::default().fg(Color::Yellow));
-            f.render_widget(Paragraph::new(text).block(block), area);
+            f.render_widget(Paragraph::new(text_lines).block(block), area);
         }
         if self.mode == Mode::SchedulingCalendar {
             let area = self.centered_rect(60, 15, size);
