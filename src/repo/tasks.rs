@@ -131,6 +131,15 @@ pub fn rename(conn: &Connection, id: &str, new_title: &str) -> Result<Task> {
     get(conn, id)
 }
 
+pub fn update_notes(conn: &Connection, id: &str, new_notes: &str) -> Result<Task> {
+    let now = time::now_ms();
+    conn.execute(
+        "UPDATE tasks SET notes=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![new_notes, now, id],
+    )?;
+    get(conn, id)
+}
+
 pub fn update_checklist(conn: &Connection, id: &str, checklist: &Vec<task::ChecklistItem>) -> Result<Task> {
     let now = time::now_ms();
     let cl_str = serde_json::to_string(checklist).unwrap_or_else(|_| "[]".to_string());

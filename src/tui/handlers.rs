@@ -79,6 +79,31 @@ impl<'a> AppHandlers for App<'a> {
                     self.input = row.title.clone();
                 }
             }
+            KeyCode::Char('n') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(task) = tasks::get(self.conn, &row.id) {
+                        crossterm::terminal::disable_raw_mode()?;
+                        crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+                        
+                        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                        let mut temp_file = tempfile::NamedTempFile::new()?;
+                        use std::io::Write;
+                        temp_file.write_all(task.notes.as_bytes())?;
+                        
+                        let _ = std::process::Command::new(editor).arg(temp_file.path()).status();
+                        
+                        if let Ok(new_notes) = std::fs::read_to_string(temp_file.path()) {
+                            if new_notes != task.notes {
+                                let _ = tasks::update_notes(self.conn, &task.id, &new_notes);
+                            }
+                        }
+                        
+                        crossterm::terminal::enable_raw_mode()?;
+                        crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                        self.load_detail();
+                    }
+                }
+            }
             KeyCode::Char('x') => self.act_on_selected(task::Status::Done)?,
             KeyCode::Char('w') => {
                 self.mode = Mode::WaitingWho;
