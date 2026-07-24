@@ -36,8 +36,9 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
     app.items
         .iter()
         .map(|r| {
-            let letter = status_letter(&r.status);
-            let color = status_color(&r.status);
+            let status_enum = r.status.parse::<crate::model::task::Status>().unwrap_or(crate::model::task::Status::Inbox);
+            let letter = status_letter(&status_enum);
+            let color = status_color(&status_enum);
             let due = crate::time::format_local(r.due);
             let tags = r.tags.join(",");
             let indent = "  ".repeat(r.indent);

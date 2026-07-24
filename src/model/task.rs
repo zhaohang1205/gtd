@@ -73,6 +73,47 @@ impl FromStr for TaskKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProjectType {
+    Parallel,
+    Sequential,
+}
+
+impl Default for ProjectType {
+    fn default() -> Self {
+        ProjectType::Parallel
+    }
+}
+
+impl fmt::Display for ProjectType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            ProjectType::Parallel => "parallel",
+            ProjectType::Sequential => "sequential",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for ProjectType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "parallel" => Ok(ProjectType::Parallel),
+            "sequential" => Ok(ProjectType::Sequential),
+            _ => Err(format!("Invalid project type: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChecklistItem {
+    pub id: String,
+    pub title: String,
+    pub done: bool,
+}
+
 pub const STATUSES: &[Status] = &[
     Status::Inbox,
     Status::Next,
@@ -102,6 +143,9 @@ pub struct Task {
     pub completed_at: Option<i64>,
     pub archived_at: Option<i64>,
     pub updated_at: i64,
+    pub delegated_to: Option<String>,
+    pub project_type: ProjectType,
+    pub checklist: Vec<ChecklistItem>,
 }
 
 pub fn is_valid_status(s: &Status) -> bool {
