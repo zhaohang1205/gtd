@@ -42,12 +42,21 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
             let due = crate::time::format_local(r.due);
             let tags = r.tags.join(",");
             let indent = "  ".repeat(r.indent);
+            
+            let is_selected = app.mode == crate::tui::app::Mode::Visual && app.selected_ids.contains(&r.id);
+            let sel_prefix = if is_selected { " [v]" } else { "" };
+            
             let line = Line::from(vec![
-                Span::styled(format!("{}{} ", indent, letter), Style::default().fg(color)),
-                Span::raw(r.title.clone()),
+                Span::styled(format!("{}{}{} ", sel_prefix, indent, letter), Style::default().fg(if is_selected { Color::Yellow } else { color })),
+                Span::styled(r.title.clone(), if is_selected { Style::default().add_modifier(ratatui::style::Modifier::BOLD) } else { Style::default() }),
                 Span::raw(format!("  {}  [{}]", due, tags)),
             ]);
-            ListItem::new(line)
+            
+            let mut item = ListItem::new(line);
+            if is_selected {
+                item = item.style(Style::default().bg(Color::DarkGray));
+            }
+            item
         })
         .collect()
 }

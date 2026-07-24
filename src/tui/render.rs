@@ -18,12 +18,30 @@ pub(crate) trait AppRender {
 
 impl<'a> AppRender for App<'a> {
     fn render(&mut self, f: &mut ratatui::Frame) {
-        self.list_state.select(Some(self.selected));
         let size = f.area();
+        let mut main_area = size;
+        if self.is_reviewing {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(size);
+            
+            let step_names = ["", "清空收件箱", "检视项目", "追踪等待事项", "重估将来/也许"];
+            let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
+            
+            let banner = Paragraph::new(Line::from(Span::styled(
+                format!(" 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ", self.review_step, step_name),
+                Style::default().bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD)
+            )));
+            f.render_widget(banner, chunks[0]);
+            main_area = chunks[1];
+        }
+
+        self.list_state.select(Some(self.selected));
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
-            .split(size);
+            .split(main_area);
 
         // 三栏：引导栏 | 列表 | 详情
         let body = Layout::default()
@@ -115,7 +133,8 @@ impl<'a> AppRender for App<'a> {
                 Mode::PlanningProject => " Project? ",
                 Mode::PlanningTime => " Time? ",
                 Mode::ChecklistAdding => " 新增检查单 ",
-                Mode::Normal => "",
+                Mode::FilteringTag => " 过滤标签 (Context) ",
+                Mode::Normal | Mode::Visual => "",
             };
             
             let mut text_lines = vec![Line::from(format!(" {}_", self.input))];
@@ -151,6 +170,7 @@ impl<'a> AppRender for App<'a> {
             ("j/k", "上下移动"),
             ("1-7", "切换主视图"),
             ("/", "全局搜索"),
+            ("f", "情境过滤 (Context)"),
             ("a", "捕获到收件箱"),
             ("n", "编辑备注($EDITOR)"),
             ("e", "编辑标题"),
@@ -308,7 +328,7 @@ impl<'a> AppRender for App<'a> {
                 Block::default()
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(border_color))
-                    .title(format!("Tasks · {}", self.view.label())),
+                    .title(format!("Tasks · {}{}", self.view.label(), if let Some(ref tf) = self.tag_filter { format!(" [@{}]", tf) } else { "".to_string() })),
             )
             .highlight_style(
                 if self.pane == Pane::Center {

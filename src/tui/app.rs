@@ -109,6 +109,8 @@ pub(crate) enum Mode {
     /// 计划钩子第 2 步：询问预计时间。
     PlanningTime,
     ChecklistAdding,
+    Visual,
+    FilteringTag,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,6 +149,11 @@ pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
     pub(crate) calendar: calendar::CalendarState,
     pub(crate) sched_dates: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
     pub(crate) search_query: String,
+    pub(crate) tag_filter: Option<String>,
+    pub(crate) visual_start_idx: Option<usize>,
+    pub(crate) selected_ids: std::collections::HashSet<String>,
+    pub(crate) is_reviewing: bool,
+    pub(crate) review_step: u8,
 }
 
 impl<'a> App<'a> {
@@ -159,18 +166,38 @@ impl<'a> App<'a> {
             list_state: ListState::default(),
             detail: None,
             mode: Mode::Normal,
-            pane: Pane::Center,
+            pane: Pane::Left,
             input: String::new(),
-            status_message: String::new(),
+            status_message: "Press '?' for help".to_string(),
             show_help: false,
             should_quit: false,
             calendar: calendar::CalendarState::new(),
             sched_dates: None,
             search_query: String::new(),
+            tag_filter: None,
+            visual_start_idx: None,
+            selected_ids: std::collections::HashSet::new(),
+            is_reviewing: false,
+            review_step: 0,
         };
         app.refresh()?;
         app.load_detail();
         Ok(app)
+    }
+
+    pub(crate) fn update_visual_selection(&mut self) {
+        if self.mode == Mode::Visual {
+            if let Some(start) = self.visual_start_idx {
+                self.selected_ids.clear();
+                let min_idx = start.min(self.selected);
+                let max_idx = start.max(self.selected);
+                for i in min_idx..=max_idx {
+                    if let Some(row) = self.items.get(i) {
+                        self.selected_ids.insert(row.id.clone());
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn total_count(&self) -> usize {
@@ -236,12 +263,17 @@ impl<'a> App<'a> {
             }
             _ => {
                 if let Some(s) = self.view.status() {
+                    let mut tags = vec![];
+                    if let Some(ref tf) = self.tag_filter {
+                        tags.push(tf.clone());
+                    }
+                    
                     let ts = tasks::list(
                         self.conn,
                         &ListFilter {
                             status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                             project: None,
-                            tags: vec![],
+                            tags,
                             query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
                         },
                     )?;
@@ -297,6 +329,9 @@ impl<'a> App<'a> {
             s = n - 1;
         }
         self.selected = s as usize;
+        if self.mode == Mode::Visual {
+            self.update_visual_selection();
+        }
         self.load_detail();
     }
 
@@ -365,19 +400,53 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn act_on_selected(&mut self, to: task::Status) -> Result<()> {
-        if let Some(row) = self.items.get(self.selected).cloned() {
-            if row.status == to.to_string() {
-                self.status_message = format!("already {}", to);
-                return Ok(());
-            }
-            if to == task::Status::Next {
-                return self.act_next(row);
-            }
-            let t = tasks::transition(self.conn, &row.id, to)?;
-            self.status_message = format!("{} -> {}", &t.id[..8], t.status);
-            self.refresh()?;
-            self.load_detail();
+        let mut ids = vec![];
+        if self.mode == Mode::Visual && !self.selected_ids.is_empty() {
+            ids.extend(self.selected_ids.iter().cloned());
+        } else if let Some(row) = self.items.get(self.selected).cloned() {
+            ids.push(row.id);
         }
+
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        if ids.len() == 1 {
+            let id = &ids[0];
+            if let Ok(task) = tasks::get(self.conn, id) {
+                if task.status == to {
+                    self.status_message = format!("already {}", to);
+                    return Ok(());
+                }
+                if to == task::Status::Next {
+                    let row = crate::tui::row_from(&task, 0, self.conn)?;
+                    return self.act_next(row);
+                }
+                let t = tasks::transition(self.conn, id, to)?;
+                self.status_message = format!("{} -> {}", &t.id[..8], t.status);
+            }
+        } else {
+            let mut count = 0;
+            for id in &ids {
+                if let Ok(task) = tasks::get(self.conn, id) {
+                    if task.status != to {
+                        if let Ok(_) = tasks::transition(self.conn, id, to) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            self.status_message = format!("Bulk {} {} items", to, count);
+        }
+
+        if self.mode == Mode::Visual {
+            self.mode = Mode::Normal;
+            self.selected_ids.clear();
+            self.visual_start_idx = None;
+        }
+
+        self.refresh()?;
+        self.load_detail();
         Ok(())
     }
 

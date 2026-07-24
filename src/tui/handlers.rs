@@ -68,7 +68,28 @@ impl<'a> AppHandlers for App<'a> {
                 self.status_message = "pomodoro stopped".into();
             }
             KeyCode::Char('p') => self.set_view(View::Projects),
-            KeyCode::Char('r') => self.set_view(View::Review),
+            KeyCode::Char('r') => {
+                self.is_reviewing = true;
+                self.review_step = 1;
+                self.set_view(View::Inbox);
+                self.status_message = "Weekly Review started".into();
+            }
+            KeyCode::Char('R') => {
+                if self.is_reviewing {
+                    self.review_step += 1;
+                    match self.review_step {
+                        2 => self.set_view(View::Projects),
+                        3 => self.set_view(View::Waiting),
+                        4 => self.set_view(View::Someday),
+                        _ => {
+                            self.is_reviewing = false;
+                            self.review_step = 0;
+                            self.set_view(View::Next);
+                            self.status_message = "Weekly Review Complete! 🎉".into();
+                        }
+                    }
+                }
+            }
             KeyCode::Char('a') => {
                 self.mode = Mode::Capturing;
                 self.input.clear();
@@ -122,12 +143,23 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
             KeyCode::Char('A') | KeyCode::Char('D') | KeyCode::Delete => {
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    tasks::archive(self.conn, &row.id)?;
-                    self.status_message = format!("archived {}", &row.id[..8]);
-                    self.refresh()?;
-                    self.load_detail();
+                let mut ids = vec![];
+                if self.mode == Mode::Visual && !self.selected_ids.is_empty() {
+                    ids.extend(self.selected_ids.iter().cloned());
+                } else if let Some(row) = self.items.get(self.selected).cloned() {
+                    ids.push(row.id);
                 }
+                for id in &ids {
+                    let _ = tasks::archive(self.conn, id);
+                }
+                self.status_message = format!("archived {} items", ids.len());
+                if self.mode == Mode::Visual {
+                    self.mode = Mode::Normal;
+                    self.selected_ids.clear();
+                    self.visual_start_idx = None;
+                }
+                self.refresh()?;
+                self.load_detail();
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
             KeyCode::Char('C') => {
@@ -176,6 +208,10 @@ impl<'a> AppHandlers for App<'a> {
                 self.mode = Mode::Search;
                 self.input = self.search_query.clone();
             }
+            KeyCode::Char('f') => {
+                self.mode = Mode::FilteringTag;
+                self.input = self.tag_filter.clone().unwrap_or_default();
+            }
             _ => {}
         }
         Ok(())
@@ -200,11 +236,47 @@ impl<'a> AppHandlers for App<'a> {
 
         match key.code {
             KeyCode::Esc => {
-                // 补全钩子里按 Esc 表示跳过当前（及后续）步骤。
-                self.mode = Mode::Normal;
-                self.input.clear();
-                self.refresh()?;
-                self.load_detail();
+                if self.is_reviewing {
+                    self.is_reviewing = false;
+                    self.review_step = 0;
+                    self.status_message = "Weekly Review cancelled".into();
+                    self.refresh()?;
+                    self.load_detail();
+                } else if self.mode == Mode::Visual {
+                    self.mode = Mode::Normal;
+                    self.visual_start_idx = None;
+                    self.selected_ids.clear();
+                    self.status_message = "Exited visual mode".into();
+                    self.refresh()?;
+                    self.load_detail();
+                } else if self.tag_filter.is_some() || !self.search_query.is_empty() {
+                    self.mode = Mode::Normal;
+                    self.tag_filter = None;
+                    self.search_query.clear();
+                    self.input.clear();
+                    self.status_message = "Cleared filters".into();
+                    self.refresh()?;
+                    self.load_detail();
+                } else {
+                    self.mode = Mode::Normal;
+                    self.input.clear();
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                if self.mode == Mode::Visual {
+                    self.mode = Mode::Normal;
+                    self.visual_start_idx = None;
+                    self.selected_ids.clear();
+                    self.status_message = "Exited visual mode".into();
+                } else {
+                    self.mode = Mode::Visual;
+                    self.visual_start_idx = Some(self.selected);
+                    self.update_visual_selection();
+                    self.status_message = "-- VISUAL --".into();
+                }
+                let _ = self.refresh();
             }
             KeyCode::Enter => {
                 let input = self.input.clone();
@@ -230,6 +302,18 @@ impl<'a> AppHandlers for App<'a> {
                     self.status_message = "Search cleared".into();
                 } else {
                     self.status_message = format!("Search: {}", self.search_query);
+                }
+                self.refresh()?;
+                self.load_detail();
+            }
+            Mode::FilteringTag => {
+                let t = input.trim().to_string();
+                if t.is_empty() {
+                    self.tag_filter = None;
+                    self.status_message = "Tag filter cleared".into();
+                } else {
+                    self.tag_filter = Some(t.clone());
+                    self.status_message = format!("Filter tag: @{}", t);
                 }
                 self.refresh()?;
                 self.load_detail();
@@ -273,12 +357,24 @@ impl<'a> AppHandlers for App<'a> {
             Mode::Tagging => {
                 let name = input.trim();
                 if !name.is_empty() {
-                    if let Some(row) = self.items.get(self.selected).cloned() {
-                        tags::add_tag_to_task(self.conn, &row.id, name)?;
-                        self.status_message = format!("tagged {} +{}", &row.id[..8], name);
-                        self.refresh()?;
-                        self.load_detail();
+                    let mut ids = vec![];
+                    if !self.selected_ids.is_empty() {
+                        ids.extend(self.selected_ids.iter().cloned());
+                    } else if let Some(row) = self.items.get(self.selected).cloned() {
+                        ids.push(row.id);
                     }
+                    
+                    let mut count = 0;
+                    for id in ids {
+                        if let Ok(_) = tags::add_tag_to_task(self.conn, &id, name) {
+                            count += 1;
+                        }
+                    }
+                    self.status_message = format!("tagged {} items with +{}", count, name);
+                    self.selected_ids.clear();
+                    self.visual_start_idx = None;
+                    self.refresh()?;
+                    self.load_detail();
                 }
             }
             Mode::SchedulingCalendar => {}
@@ -416,7 +512,7 @@ impl<'a> AppHandlers for App<'a> {
                 self.mode = Mode::Normal;
                 self.input.clear();
             }
-            Mode::Normal => {}
+            Mode::Normal | Mode::Visual => {}
         }
         Ok(())
     }
