@@ -138,6 +138,32 @@ pub fn transition(conn: &Connection, id: &str, to_status: &str) -> Result<Task> 
     Ok(t)
 }
 
+/// Attach a task to a project (set `parent_id`) and record an `organized` event.
+pub fn assign_project(conn: &Connection, id: &str, project_id: &str) -> Result<Task> {
+    let _ = get(conn, id)?;
+    let now = time::now_ms();
+    conn.execute(
+        "UPDATE tasks SET parent_id=?1, organized_at=?2, updated_at=?3 WHERE id=?4",
+        rusqlite::params![project_id, now, now, id],
+    )?;
+    log_event(conn, id, event::EV_ORGANIZED, None, None, None)?;
+    get(conn, id)
+}
+
+/// Set a soft deadline (`due_at`) without changing the task status. Used by the
+/// inbox→next planning hook so a next action keeps its status while gaining a due.
+pub fn set_due(conn: &Connection, id: &str, due_ms: i64) -> Result<Task> {
+    let mut t = get(conn, id)?;
+    t.due_at = Some(due_ms);
+    t.updated_at = time::now_ms();
+    conn.execute(
+        "UPDATE tasks SET due_at=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![t.due_at, t.updated_at, id],
+    )?;
+    log_event(conn, id, event::EV_DUE, None, None, None)?;
+    get(conn, id)
+}
+
 /// Schedule a task: set planned start/end + optional recurrence, move to
 /// `scheduled`, and record a `scheduled` event.
 pub fn schedule(

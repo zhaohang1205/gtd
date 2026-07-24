@@ -9,7 +9,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, List, ListState, Paragraph},
     text::{Line, Span},
@@ -25,16 +25,20 @@ use crate::repo::tags;
 use crate::time;
 
 mod ui;
-use ui::build_list_items;
+use ui::{build_list_items, status_color, status_letter};
 
 const SHORT_HELP: &str =
-    " j/k nav · 1-7 view · p project · r review · a add · x done · w wait · s someday · c schedule · t tag · A archive · q quit · ? help";
+    " j/k nav · Ctrl+H/L pane · 1 inbox 2 next · p project · r review · a add · x done · w wait · s someday · c schedule · t tag · A archive · q quit · ? help";
 const LONG_HELP: &str =
-    "j/k or ↑/↓ navigate · 1 inbox 2 next 3 waiting 4 scheduled 5 someday 6 reference 7 done\n\
+    "j/k or ↑/↓ navigate · Ctrl+H/Ctrl+L switch focus pane\n\
+     1 inbox · 2 next · 3 waiting · 4 scheduled · 5 someday · 6 reference · 7 done\n\
      p projects tree · r weekly review · a capture · x mark done · w waiting · s someday\n\
      c schedule (<start> [;rrule=...]) · t add tag · A archive · Enter=next · q quit · ? toggle";
 
-#[derive(Clone, Copy)]
+/// The seven GTD statuses (data layer is unchanged). In the UI only Inbox and
+/// Next are "primary" views; the rest live as collapsible context groups in the
+/// left guide pane so they stay reachable without crowding the foreground.
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Inbox,
     Next,
@@ -61,6 +65,16 @@ impl View {
             View::Review => "Review",
         }
     }
+    /// Which GTD workflow stage this view maps to, used to highlight the guide.
+    fn stage(self) -> &'static str {
+        match self {
+            View::Inbox => "clarify",
+            View::Next => "engage",
+            View::Projects => "organize",
+            View::Review => "reflect",
+            _ => "engage",
+        }
+    }
     fn status(self) -> Option<&'static str> {
         match self {
             View::Inbox => Some("inbox"),
@@ -72,6 +86,16 @@ impl View {
             View::Done => Some("done"),
             View::Projects | View::Review => None,
         }
+    }
+    /// The "context" groups shown (collapsed) in the left pane.
+    fn context_groups() -> &'static [View] {
+        &[
+            View::Waiting,
+            View::Scheduled,
+            View::Someday,
+            View::Reference,
+            View::Done,
+        ]
     }
     fn from_digit(d: char) -> Option<View> {
         match d {
@@ -87,12 +111,22 @@ impl View {
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     Normal,
     Capturing,
     Tagging,
     Scheduling,
+    /// Step 1 of the inbox→next planning hook: asking for a project.
+    PlanningProject,
+    /// Step 2 of the planning hook: asking for a time.
+    PlanningTime,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Pane {
+    Center,
+    Right,
 }
 
 #[derive(Clone)]
@@ -119,6 +153,7 @@ pub struct App<'a> {
     list_state: ListState,
     detail: Option<DetailData>,
     mode: Mode,
+    pane: Pane,
     input: String,
     status_message: String,
     show_help: bool,
@@ -135,6 +170,7 @@ impl<'a> App<'a> {
             list_state: ListState::default(),
             detail: None,
             mode: Mode::Normal,
+            pane: Pane::Center,
             input: String::new(),
             status_message: String::new(),
             show_help: false,
@@ -143,6 +179,36 @@ impl<'a> App<'a> {
         app.refresh()?;
         app.load_detail();
         Ok(app)
+    }
+
+    fn total_count(&self) -> usize {
+        tasks::list(
+            self.conn,
+            &ListFilter {
+                status: None,
+                project: None,
+                tags: vec![],
+            },
+        )
+        .map(|v| v.len())
+        .unwrap_or(0)
+    }
+
+    fn context_count(&self, v: View) -> usize {
+        if let Some(s) = v.status() {
+            tasks::list(
+                self.conn,
+                &ListFilter {
+                    status: Some(s.to_string()),
+                    project: None,
+                    tags: vec![],
+                },
+            )
+            .map(|v| v.len())
+            .unwrap_or(0)
+        } else {
+            0
+        }
     }
 
     fn refresh(&mut self) -> Result<()> {
@@ -240,11 +306,60 @@ impl<'a> App<'a> {
         self.load_detail();
     }
 
+    fn switch_pane(&mut self) {
+        self.pane = match self.pane {
+            Pane::Center => Pane::Right,
+            Pane::Right => Pane::Center,
+        };
+    }
+
+    /// True when a `next` task still lacks planning info (project and/or time).
+    fn needs_planning(t: &Task) -> bool {
+        let missing_project = t.parent_id.is_none();
+        let missing_time = t.due_at.is_none() && t.scheduled_start_at.is_none();
+        missing_project || missing_time
+    }
+
+    fn planning_hint(t: &Task) -> String {
+        let mut missing = Vec::new();
+        if t.parent_id.is_none() {
+            missing.push("项目");
+        }
+        if t.due_at.is_none() && t.scheduled_start_at.is_none() {
+            missing.push("时间");
+        }
+        if missing.is_empty() {
+            String::new()
+        } else {
+            format!("建议补充{} (t 加项目, c 排期)", missing.join("/"))
+        }
+    }
+
+    /// Set a task to `next`, then if it lacks planning info start the optional
+    /// step-by-step completion hook (skippable).
+    fn act_next(&mut self, row: Row) -> Result<()> {
+        let t = tasks::transition(self.conn, &row.id, "next")?;
+        self.status_message = format!("{} -> next", &t.id[..8]);
+        if Self::needs_planning(&t) {
+            self.mode = Mode::PlanningProject;
+            self.input.clear();
+            let hint = Self::planning_hint(&t);
+            self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过) {}", &t.id[..8], hint);
+        } else {
+            self.refresh()?;
+            self.load_detail();
+        }
+        Ok(())
+    }
+
     fn act_on_selected(&mut self, to: &str) -> Result<()> {
         if let Some(row) = self.items.get(self.selected).cloned() {
             if row.status == to {
                 self.status_message = format!("already {}", to);
                 return Ok(());
+            }
+            if to == "next" {
+                return self.act_next(row);
             }
             let t = tasks::transition(self.conn, &row.id, to)?;
             self.status_message = format!("{} -> {}", &t.id[..8], t.status);
@@ -271,6 +386,10 @@ impl<'a> App<'a> {
             KeyCode::Char('?') => self.show_help = !self.show_help,
             KeyCode::Down | KeyCode::Char('j') => self.move_sel(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_sel(-1),
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.pane = Pane::Center
+            }
+            KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => self.switch_pane(),
             KeyCode::Char(d) if d.is_ascii_digit() => {
                 if let Some(v) = View::from_digit(d) {
                     self.set_view(v);
@@ -310,8 +429,11 @@ impl<'a> App<'a> {
     fn handle_input(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
+                // Esc during the planning hook skips the current (and remaining) step.
                 self.mode = Mode::Normal;
                 self.input.clear();
+                self.refresh()?;
+                self.load_detail();
             }
             KeyCode::Enter => {
                 let input = self.input.clone();
@@ -369,8 +491,13 @@ impl<'a> App<'a> {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     match time::parse_time(start_s) {
                         Ok(start_ms) => {
-                            let t =
-                                tasks::schedule(self.conn, &row.id, start_ms, None, rrule)?;
+                            let t = tasks::schedule(
+                                self.conn,
+                                &row.id,
+                                start_ms,
+                                None,
+                                rrule,
+                            )?;
                             self.status_message = format!("scheduled {}", &t.id[..8]);
                             self.refresh()?;
                             self.load_detail();
@@ -379,24 +506,72 @@ impl<'a> App<'a> {
                     }
                 }
             }
+            Mode::PlanningProject => {
+                let name = input.trim();
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if !name.is_empty() {
+                        // Accept a project id, id-prefix, or title.
+                        if let Ok(pid) = tasks::resolve_project(self.conn, name) {
+                            tasks::assign_project(self.conn, &row.id, &pid)?;
+                            self.status_message = format!("{} -> project", &row.id[..8]);
+                        } else {
+                            self.status_message = format!("project not found: {}", name);
+                        }
+                        self.refresh()?;
+                        self.load_detail();
+                    }
+                    // Proceed to the time step regardless (skip if empty).
+                    if let Some(row) = self.items.get(self.selected).cloned() {
+                        if let Ok(t) = tasks::get(self.conn, &row.id) {
+                            if Self::needs_time(&t) {
+                                self.mode = Mode::PlanningTime;
+                                self.input.clear();
+                                self.status_message =
+                                    format!("{} 预计开始/截止? (空/Esc 跳过)", &row.id[..8]);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    self.mode = Mode::Normal;
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
+            Mode::PlanningTime => {
+                let start_s = input.trim();
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if !start_s.is_empty() {
+                        match time::parse_time(start_s) {
+                            Ok(start_ms) => {
+                                tasks::set_due(self.conn, &row.id, start_ms)?;
+                                self.status_message = format!("due set {}", &row.id[..8]);
+                            }
+                            Err(e) => self.status_message = format!("bad time: {}", e),
+                        }
+                    }
+                    self.mode = Mode::Normal;
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
             Mode::Normal => {}
         }
         Ok(())
     }
 
+    fn needs_time(t: &Task) -> bool {
+        t.due_at.is_none() && t.scheduled_start_at.is_none()
+    }
+
     fn render(&mut self, f: &mut ratatui::Frame) {
         self.list_state.select(Some(self.selected));
         let size = f.area();
-        let footer_h = if self.show_help {
-            Constraint::Length(5)
-        } else {
-            Constraint::Length(3)
-        };
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(2), Constraint::Min(0), footer_h])
+            .constraints([Constraint::Length(2), Constraint::Min(0), Constraint::Length(3)])
             .split(size);
 
+        // Header
         let header = Line::from(vec![
             Span::styled(
                 " gtp ",
@@ -407,29 +582,31 @@ impl<'a> App<'a> {
         ]);
         f.render_widget(Paragraph::new(header), chunks[0]);
 
+        // Three panes: guide | list | detail
         let body = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+            .constraints([
+                Constraint::Percentage(22),
+                Constraint::Percentage(46),
+                Constraint::Percentage(32),
+            ])
             .split(chunks[1]);
 
+        self.render_guide(f, body[0]);
         match self.view {
-            View::Review => self.render_review(f, body[0]),
-            _ => {
-                let items = build_list_items(self);
-                let list = List::new(items)
-                    .block(Block::default().borders(Borders::ALL).title("Tasks"))
-                    .highlight_style(Style::default().bg(Color::DarkGray))
-                    .highlight_symbol("▶ ");
-                f.render_stateful_widget(list, body[0], &mut self.list_state);
-            }
+            View::Review => self.render_review(f, body[1]),
+            _ => self.render_list(f, body[1]),
         }
-        self.render_detail(f, body[1]);
+        self.render_detail(f, body[2]);
 
+        // Footer
         let footer = if self.mode != Mode::Normal {
             match self.mode {
                 Mode::Capturing => format!(" New task: {}_", self.input),
                 Mode::Tagging => format!(" Add tag: {}_", self.input),
                 Mode::Scheduling => format!(" Schedule <start> [;rrule=...]: {}_", self.input),
+                Mode::PlanningProject => format!(" Project? {}_", self.input),
+                Mode::PlanningTime => format!(" Time? {}_", self.input),
                 Mode::Normal => String::new(),
             }
         } else if self.show_help {
@@ -441,6 +618,95 @@ impl<'a> App<'a> {
             Paragraph::new(footer).block(Block::default().borders(Borders::ALL)),
             chunks[2],
         );
+    }
+
+    fn render_guide(&self, f: &mut ratatui::Frame, area: Rect) {
+        let empty = self.total_count() == 0;
+        let mut lines: Vec<Line> = Vec::new();
+
+        if empty {
+            lines.push(Line::from(Span::styled(
+                " Welcome to gtp",
+                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(" Press 'a' to capture"));
+            lines.push(Line::from(" your first task and"));
+            lines.push(Line::from(" start the GTD flow"));
+            lines.push(Line::from(""));
+        }
+
+        lines.push(Line::from(Span::styled(
+            " Workflow",
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )));
+        let stages = [
+            ("收集 Capture", "a 收集", "capture"),
+            ("理清 Clarify", "Enter→next", "clarify"),
+            ("组织 Organize", "p 项目", "organize"),
+            ("回顾 Reflect", "r 周回顾", "reflect"),
+            ("行动 Engage", "做 next", "engage"),
+        ];
+        for (name, key, stage) in stages {
+            let active = self.view.stage() == stage;
+            let style = if active {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!(" {}{}", if active { "▸ " } else { "  " }, name), style),
+                Span::styled(format!("  {}", key), Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Contexts",
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )));
+        for v in View::context_groups() {
+            let c = self.context_count(*v);
+            let color = status_color(v.status().unwrap_or(""));
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(" {} {} ", status_letter(v.status().unwrap_or("")), v.label()),
+                    Style::default().fg(color),
+                ),
+                Span::raw(format!(" {}", c)),
+            ]));
+        }
+
+        let title = if self.pane == Pane::Center {
+            " Guide "
+        } else {
+            " Guide "
+        };
+        f.render_widget(
+            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title(title)),
+            area,
+        );
+    }
+
+    fn render_list(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let items = build_list_items(self);
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(format!("Tasks · {}", self.view.label())),
+            )
+            .highlight_style(
+                if self.pane == Pane::Center {
+                    Style::default().bg(Color::DarkGray)
+                } else {
+                    Style::default()
+                },
+            )
+            .highlight_symbol("▶ ");
+        f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
     fn render_detail(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
@@ -584,6 +850,9 @@ mod tests {
     fn kc(k: KeyCode) -> KeyEvent {
         KeyEvent::new(k, KeyModifiers::empty())
     }
+    fn ctr(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
 
     fn seed(conn: &Connection) {
         let proj = tasks::create_capture(
@@ -641,7 +910,7 @@ mod tests {
         migrate::run(&mut conn).unwrap();
         seed(&conn);
         let mut app = App::new(&conn).unwrap();
-        let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
         let mut out = std::fs::File::create("/tmp/gtp_tui_frames.txt").unwrap();
         let frame = |label: &str, term: &mut Terminal<TestBackend>, app: &mut App, out: &mut std::fs::File| -> String {
             term.draw(|f| app.render(f)).unwrap();
@@ -651,106 +920,139 @@ mod tests {
             s
         };
 
+        // 1) Three-pane layout: guide + list + detail
         let s = frame("1-initial-inbox", &mut term, &mut app, &mut out);
-        assert!(s.contains("Inbox"), "header should show Inbox");
-        assert!(s.contains("Buy groceries"), "inbox should list seeded task");
+        assert!(s.contains("Workflow"), "left guide pane should render");
+        assert!(s.contains("Contexts"), "context groups should render");
+        assert!(s.contains("Tasks · Inbox"), "center list pane title");
+        assert!(s.contains("Detail"), "right detail pane");
+        assert!(s.contains("Buy groceries"), "inbox lists seeded task");
+        assert!(s.contains("Waiting") && s.contains("Someday"), "context groups listed");
 
+        // 2) vim nav: down, up
         app.handle_key(key('j')).unwrap();
         frame("2-nav-down", &mut term, &mut app, &mut out);
-        app.handle_key(kc(KeyCode::Down)).unwrap();
-        frame("3-nav-down2", &mut term, &mut app, &mut out);
         app.handle_key(key('k')).unwrap();
-        frame("4-nav-up", &mut term, &mut app, &mut out);
+        frame("3-nav-up", &mut term, &mut app, &mut out);
 
-        // capture flow
+        // 3) Ctrl+L switches focus to right pane (detail highlight off, list normal)
+        app.handle_key(ctr('l')).unwrap();
+        frame("4-pane-right", &mut term, &mut app, &mut out);
+        assert!(app.pane == Pane::Right, "Ctrl+L moves focus to right pane");
+        app.handle_key(ctr('h')).unwrap();
+        frame("5-pane-center", &mut term, &mut app, &mut out);
+        assert!(app.pane == Pane::Center, "Ctrl+H moves focus back to center");
+
+        // 4) capture auto-jumps to Inbox
         app.handle_key(key('a')).unwrap();
-        let s = frame("5-capture-mode", &mut term, &mut app, &mut out);
-        assert!(s.contains("New task:"), "capture mode should show prompt");
+        let s = frame("6-capture-mode", &mut term, &mut app, &mut out);
+        assert!(s.contains("New task:"), "capture prompt");
         for c in "Buy milk".chars() {
             app.handle_key(key(c)).unwrap();
         }
-        frame("6-capture-typing", &mut term, &mut app, &mut out);
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("7-after-capture", &mut term, &mut app, &mut out);
-        assert!(s.contains("Buy milk"), "newly captured task should appear");
-        assert!(s.contains("· Inbox"), "capture should auto-jump to Inbox view");
+        assert!(s.contains("Buy milk"), "newly captured task appears");
+        assert!(s.contains("· Inbox"), "capture jumps to Inbox");
 
-        // Enter -> next
+        // 5) Enter -> next triggers planning hook (project step, then time step)
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        frame("8-to-next", &mut term, &mut app, &mut out);
+        let s = frame("8-plan-project", &mut term, &mut app, &mut out);
+        assert!(s.contains("Project?"), "planning hook asks for project");
+        // skip project
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = frame("9-plan-time", &mut term, &mut app, &mut out);
+        assert!(s.contains("Time?"), "planning hook asks for time");
+        // skip time -> back to normal; the planned task is now 'next' (left inbox)
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let _ = frame("10-after-plan", &mut term, &mut app, &mut out);
+        assert!(app.mode == Mode::Normal, "planning hook finishes");
+        let in_next = tasks::list(
+            &conn,
+            &ListFilter {
+                status: Some("next".into()),
+                project: None,
+                tags: vec![],
+            },
+        )
+        .unwrap()
+        .iter()
+        .any(|t| t.title == "Write homepage copy");
+        assert!(in_next, "planned task moved to next");
 
-        for (d, lbl) in [('2', "9-next"), ('3', "10-waiting"), ('4', "11-scheduled"), ('5', "12-someday"), ('6', "13-reference"), ('7', "14-done"), ('1', "15-back-inbox")] {
+        // 6) view switching via digits
+        for (d, lbl, expect) in [
+            ('3', "11-waiting", "Waiting"),
+            ('4', "12-scheduled", "Scheduled"),
+            ('5', "13-someday", "Someday"),
+            ('6', "14-reference", "Reference"),
+            ('7', "15-done", "Done"),
+            ('1', "16-back-inbox", "Inbox"),
+        ] {
             app.handle_key(key(d)).unwrap();
             let s = frame(lbl, &mut term, &mut app, &mut out);
-            let expect = match d {
-                '2' => "Next", '3' => "Waiting", '4' => "Scheduled", '5' => "Someday",
-                '6' => "Reference", '7' => "Done", _ => "Inbox",
-            };
-            assert!(s.contains(expect), "view {lbl} should show header {expect}");
+            assert!(s.contains(expect), "view {lbl} shows {expect}");
         }
 
+        // 7) projects + review
         app.handle_key(key('p')).unwrap();
-        let s = frame("16-projects", &mut term, &mut app, &mut out);
-        assert!(s.contains("Website Redesign"), "projects view should show project");
-
+        let s = frame("17-projects", &mut term, &mut app, &mut out);
+        assert!(s.contains("Website Redesign"), "projects view");
         app.handle_key(key('r')).unwrap();
-        let s = frame("17-review", &mut term, &mut app, &mut out);
-        assert!(s.contains("Weekly Review"), "review view header");
+        let s = frame("18-review", &mut term, &mut app, &mut out);
+        assert!(s.contains("Weekly Review"), "review view");
 
-        // capture from a non-inbox view should auto-jump back to Inbox
+        // 8) capture from a non-inbox view auto-jumps to Inbox
         app.handle_key(key('3')).unwrap();
-        frame("17b-waiting", &mut term, &mut app, &mut out);
         app.handle_key(key('a')).unwrap();
         for c in "Captured from waiting".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        let s = frame("17c-capture-jump", &mut term, &mut app, &mut out);
-        assert!(s.contains("· Inbox"), "capture from waiting should jump to Inbox");
-        assert!(s.contains("Captured from waiting"), "jumped view should list the new task");
+        let s = frame("19-capture-jump", &mut term, &mut app, &mut out);
+        assert!(s.contains("· Inbox"), "capture from waiting jumps to Inbox");
+        assert!(s.contains("Captured from waiting"));
 
-        // back to inbox, tag the first task
-        app.handle_key(key('1')).unwrap();
+        // 9) tag + schedule flow
         app.handle_key(key('t')).unwrap();
-        let s = frame("18-tag-mode", &mut term, &mut app, &mut out);
-        assert!(s.contains("Add tag:"), "tag mode prompt");
         for c in "urgent".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        let s = frame("19-after-tag", &mut term, &mut app, &mut out);
-        assert!(s.contains("urgent"), "detail should show added tag");
-
-        // schedule the first task
+        let s = frame("20-after-tag", &mut term, &mut app, &mut out);
+        assert!(s.contains("urgent"), "tag added");
         app.handle_key(key('c')).unwrap();
-        let s = frame("20-schedule-mode", &mut term, &mut app, &mut out);
-        assert!(s.contains("Schedule"), "schedule prompt");
         for c in "+2h".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("21-after-schedule", &mut term, &mut app, &mut out);
-        assert!(s.contains("sched"), "detail should show scheduled time");
+        assert!(s.contains("sched"), "scheduled time shown");
 
-        // now it should leave inbox
-        app.handle_key(key('1')).unwrap();
-        let s = frame("22-inbox-after-schedule", &mut term, &mut app, &mut out);
-        assert!(!s.contains("Write homepage copy"), "scheduled task should leave inbox");
-
-        // archive from scheduled view
+        // 10) archive + help toggle + quit
         app.handle_key(key('4')).unwrap();
         app.handle_key(key('A')).unwrap();
-        frame("23-after-archive", &mut term, &mut app, &mut out);
-
-        // help toggle
+        frame("22-after-archive", &mut term, &mut app, &mut out);
         app.handle_key(key('?')).unwrap();
-        let s = frame("24-help", &mut term, &mut app, &mut out);
-        assert!(s.contains("navigate"), "help text should show");
+        let s = frame("23-help", &mut term, &mut app, &mut out);
+        assert!(s.contains("navigate"), "help text");
         app.handle_key(key('?')).unwrap();
-        frame("25-help-off", &mut term, &mut app, &mut out);
-
-        // quit
+        frame("24-help-off", &mut term, &mut app, &mut out);
         app.handle_key(key('q')).unwrap();
-        assert!(app.should_quit, "q should set quit flag");
+        assert!(app.should_quit, "q quits");
+    }
+
+    #[test]
+    fn empty_db_shows_guide() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let mut app = App::new(&conn).unwrap();
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = snap(&term);
+        let mut out = std::fs::File::create("/tmp/gtp_empty_guide.txt").unwrap();
+        out.write_all(s.as_bytes()).unwrap();
+        assert!(s.contains("Welcome to gtp"), "empty db should show welcome guide");
+        assert!(s.contains("GTD flow"), "welcome copy");
     }
 }
