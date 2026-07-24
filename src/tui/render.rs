@@ -126,7 +126,7 @@ impl<'a> AppRender for App<'a> {
                 Mode::EditingTitle => " Edit title ",
                 Mode::Capturing => " 快速录入 (支持自然语言) ",
                 Mode::Tagging => " Add tag (Hints: home, work, errands...) ",
-                Mode::SchedulingTimeRRule => " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=DAILY) ",
+                Mode::SchedulingTimeRRule => " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) ",
                 Mode::SchedulingCalendar => "", // Not reached
                 Mode::WaitingWho => " Waiting for who/what? ",
                 Mode::WaitingWhen => " Reminder time? (e.g. +1d, tomorrow 10:00) ",

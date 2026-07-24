@@ -127,6 +127,7 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
     let mut interval: i64 = 1;
     let mut count: i64 = limit as i64;
     let mut until_ms: Option<i64> = None;
+    let mut byday: Vec<chrono::Weekday> = Vec::new();
 
     for part in rrule.split(';') {
         if part.is_empty() {
@@ -138,6 +139,20 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
             "INTERVAL" => interval = v.parse().unwrap_or(1).max(1),
             "COUNT" => count = v.parse().unwrap_or(limit as i64).max(1),
             "UNTIL" => until_ms = Some(parse_until(v)?),
+            "BYDAY" => {
+                for d in v.split(',') {
+                    match d.trim().to_uppercase().as_str() {
+                        "MO" => byday.push(chrono::Weekday::Mon),
+                        "TU" => byday.push(chrono::Weekday::Tue),
+                        "WE" => byday.push(chrono::Weekday::Wed),
+                        "TH" => byday.push(chrono::Weekday::Thu),
+                        "FR" => byday.push(chrono::Weekday::Fri),
+                        "SA" => byday.push(chrono::Weekday::Sat),
+                        "SU" => byday.push(chrono::Weekday::Sun),
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -145,15 +160,40 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
     let mut out = Vec::new();
     let mut cur = anchor;
     let max_iter = (count as usize).min(limit);
-    for _ in 0..max_iter {
-        let ms = cur.timestamp_millis();
-        if let Some(u) = until_ms {
-            if ms > u {
-                break;
+    
+    use chrono::Datelike;
+    if freq == "WEEKLY" && !byday.is_empty() {
+        let mut occurrences_found = 0;
+        let mut current_day = cur;
+        
+        // Always include the anchor if it's the very first explicitly scheduled occurrence,
+        // but it's more standard to only include days that match BYDAY.
+        // We'll iterate up to max_iter occurrences matching BYDAY.
+        while occurrences_found < max_iter {
+            if byday.contains(&current_day.weekday()) {
+                let ms = current_day.timestamp_millis();
+                if let Some(u) = until_ms {
+                    if ms > u { break; }
+                }
+                out.push(ms);
+                occurrences_found += 1;
+            }
+            current_day = current_day + chrono::Duration::days(1);
+            if current_day.weekday() == chrono::Weekday::Mon && interval > 1 {
+                current_day = current_day + chrono::Duration::weeks(interval - 1);
             }
         }
-        out.push(ms);
-        cur = step(cur, &freq, interval)?;
+    } else {
+        for _ in 0..max_iter {
+            let ms = cur.timestamp_millis();
+            if let Some(u) = until_ms {
+                if ms > u {
+                    break;
+                }
+            }
+            out.push(ms);
+            cur = step(cur, &freq, interval)?;
+        }
     }
     Ok(out)
 }
