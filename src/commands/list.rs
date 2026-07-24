@@ -18,6 +18,7 @@ pub fn run(
         status: status.map(|s| s.parse().unwrap()),
         project: project.map(|s| s.to_string()),
         tags: tags_filter.to_vec(),
+        query: None,
     };
     let mut tasks_vec = tasks::list(conn, &f)?;
 

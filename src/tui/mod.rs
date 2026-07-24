@@ -120,6 +120,7 @@ enum Mode {
     SchedulingTimeRRule,
     WaitingWho,
     WaitingWhen,
+    Search,
     /// 计划钩子第 1 步：询问归属项目。
     PlanningProject,
     /// 计划钩子第 2 步：询问预计时间。
@@ -164,6 +165,7 @@ pub struct App<'a> {
     should_quit: bool,
     calendar: calendar::CalendarState,
     sched_dates: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
+    search_query: String,
 }
 
 impl<'a> App<'a> {
@@ -183,6 +185,7 @@ impl<'a> App<'a> {
             should_quit: false,
             calendar: calendar::CalendarState::new(),
             sched_dates: None,
+            search_query: String::new(),
         };
         app.refresh()?;
         app.load_detail();
@@ -196,6 +199,7 @@ impl<'a> App<'a> {
                 status: None,
                 project: None,
                 tags: vec![],
+                query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
             },
         )
         .unwrap_or(0)
@@ -209,6 +213,7 @@ impl<'a> App<'a> {
                     status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                     project: None,
                     tags: vec![],
+                    query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
                 },
             )
             .unwrap_or(0),
@@ -226,6 +231,7 @@ impl<'a> App<'a> {
                         status: None,
                         project: None,
                         tags: vec![],
+                        query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
                     },
                 )?
                 .into_iter()
@@ -239,6 +245,7 @@ impl<'a> App<'a> {
                             status: None,
                             project: Some(p.id.clone()),
                             tags: vec![],
+                            query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
                         },
                     )?;
                     for a in actions {
@@ -254,6 +261,7 @@ impl<'a> App<'a> {
                             status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                             project: None,
                             tags: vec![],
+                            query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
                         },
                     )?;
                     for t in ts {
@@ -475,6 +483,10 @@ impl<'a> App<'a> {
                 let _ = crate::commands::pomo::stop();
                 self.status_message = "pomodoro stopped".into();
             }
+            KeyCode::Char('/') => {
+                self.mode = Mode::Search;
+                self.input = self.search_query.clone();
+            }
             _ => {}
         }
         Ok(())
@@ -523,6 +535,16 @@ impl<'a> App<'a> {
 
     fn confirm_input(&mut self, mode: Mode, input: &str) -> Result<()> {
         match mode {
+            Mode::Search => {
+                self.search_query = input.trim().to_string();
+                if self.search_query.is_empty() {
+                    self.status_message = "Search cleared".into();
+                } else {
+                    self.status_message = format!("Search: {}", self.search_query);
+                }
+                self.refresh()?;
+                self.load_detail();
+            }
             Mode::EditingTitle => {
                 let title = input.trim();
                 if !title.is_empty() {
@@ -792,6 +814,7 @@ impl<'a> App<'a> {
 
         if self.mode != Mode::Normal && self.mode != Mode::SchedulingCalendar {
             let title = match self.mode {
+                Mode::Search => " Search Tasks (Title / Notes) ",
                 Mode::EditingTitle => " Edit title ",
                 Mode::Capturing => " New task ",
                 Mode::Tagging => " Add tag (Hints: home, work, errands...) ",
@@ -826,6 +849,7 @@ impl<'a> App<'a> {
             ("h/l", "切换面板"),
             ("j/k", "上下移动"),
             ("P", "番茄钟"),
+            ("/", "搜索"),
             ("a", "收集任务"),
             ("e", "编辑标题"),
             ("w", "标记等待"),
@@ -1145,6 +1169,7 @@ fn centered_rect(percent_x: u16, height: u16, r: Rect) -> Rect {
                 status: None,
                 project: None,
                 tags: vec![],
+                query: None,
             },
         )
         .unwrap_or_default();

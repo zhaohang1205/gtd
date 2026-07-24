@@ -27,6 +27,7 @@ pub fn tree(conn: &Connection) -> Result<()> {
             status: None,
             project: None,
             tags: vec![],
+            query: None,
         },
     )?
     .into_iter()
@@ -46,6 +47,7 @@ pub fn tree(conn: &Connection) -> Result<()> {
                 status: None,
                 project: Some(p.id.clone()),
                 tags: vec![],
+                query: None,
             },
         )?;
         for a in actions {
@@ -65,6 +67,7 @@ pub fn review(conn: &Connection) -> Result<()> {
             status: None,
             project: None,
             tags: vec![],
+            query: None,
         },
     )?;
     let inbox = all.iter().filter(|t| t.status == crate::model::task::Status::Inbox).count();

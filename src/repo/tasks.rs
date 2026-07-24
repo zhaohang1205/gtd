@@ -294,6 +294,7 @@ pub struct ListFilter {
     pub status: Option<task::Status>,
     pub project: Option<String>, // project id or name
     pub tags: Vec<String>,
+    pub query: Option<String>,
 }
 
 pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
@@ -318,6 +319,12 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
             " AND id IN (SELECT task_id FROM task_tags tt JOIN tags g ON g.id=tt.tag_id WHERE g.name = ?)",
         );
         params.push(Box::new(tag.clone()));
+    }
+    if let Some(q) = &f.query {
+        sql.push_str(" AND (title LIKE ? OR notes LIKE ?)");
+        let like_q = format!("%{}%", q);
+        params.push(Box::new(like_q.clone()));
+        params.push(Box::new(like_q));
     }
     sql.push_str(
         " ORDER BY (scheduled_start_at IS NOT NULL) DESC, scheduled_start_at ASC, due_at ASC, created_at ASC",
@@ -350,6 +357,12 @@ pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
             " AND id IN (SELECT task_id FROM task_tags tt JOIN tags g ON g.id=tt.tag_id WHERE g.name = ?)",
         );
         params.push(Box::new(tag.clone()));
+    }
+    if let Some(q) = &f.query {
+        sql.push_str(" AND (title LIKE ? OR notes LIKE ?)");
+        let like_q = format!("%{}%", q);
+        params.push(Box::new(like_q.clone()));
+        params.push(Box::new(like_q));
     }
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
