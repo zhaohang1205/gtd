@@ -36,7 +36,7 @@ pub(crate) fn pad_right(s: &str, width: usize) -> String {
 /// GTD 的七个状态（数据层不变）。界面里只有 Inbox 和 Next 是“主视图”，
 /// 其余状态作为可折叠的“上下文分组”放在左侧引导栏，既保持可达，
 /// 又不会把前台铺得太满造成心理负担。
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum View {
     Inbox,
     Next,

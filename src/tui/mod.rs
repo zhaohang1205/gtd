@@ -211,6 +211,7 @@ mod tests {
         let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
         let mut out = std::fs::File::create("/tmp/gtp_tui_frames.txt").unwrap();
         let frame = |label: &str, term: &mut Terminal<TestBackend>, app: &mut App, out: &mut std::fs::File| -> String {
+            term.clear().unwrap();
             term.draw(|f| app.render(f)).unwrap();
             let s = snap(term);
             writeln!(out, "===== {label} =====").unwrap();
@@ -234,6 +235,7 @@ mod tests {
         frame("3-nav-up", &mut term, &mut app, &mut out);
 
         // 3) h/l 把焦点在 Left, Center, Right 之间切换
+        app.pane = Pane::Center;
         app.handle_key(key('l')).unwrap();
         frame("4-pane-right", &mut term, &mut app, &mut out);
         assert!(app.pane == Pane::Right, "l 把焦点移到右栏");
@@ -248,7 +250,7 @@ mod tests {
         // 4) 收集后自动跳回 Inbox
         app.handle_key(key('a')).unwrap();
         let s = norm(&frame("6-capture-mode", &mut term, &mut app, &mut out));
-        assert!(s.contains("Newtask"), "收集提示");
+        assert!(s.contains("支持自然语言"), "收集提示");
         for c in "Buy milk".chars() {
             app.handle_key(key(c)).unwrap();
         }
@@ -303,7 +305,8 @@ mod tests {
         assert!(s.contains("WebsiteRedesign"), "项目视图");
         app.handle_key(key('r')).unwrap();
         let s = norm(&frame("18-review", &mut term, &mut app, &mut out));
-        assert!(s.contains("WeeklyReview"), "回顾视图");
+        assert!(s.contains("每周回顾"), "回顾向导");
+        app.handle_key(kc(KeyCode::Esc)).unwrap(); // Cancel wizard
 
         // 8) 在非 inbox 视图收集后自动跳回 Inbox
         app.handle_key(key('3')).unwrap();
@@ -342,6 +345,56 @@ mod tests {
         frame("24-help-off", &mut term, &mut app, &mut out);
         app.handle_key(key('q')).unwrap();
         assert!(app.should_quit, "q quits");
+
+        // --- NEW FEATURES TESTS ---
+
+        // Visual Mode
+        app.should_quit = false;
+        app.handle_key(key('1')).unwrap(); // Switch to Inbox
+        app.handle_key(key('v')).unwrap();
+        assert!(app.mode == Mode::Visual, "进入可视模式");
+        app.handle_key(key('j')).unwrap(); // Move down to select two items
+        assert!(app.selected_ids.len() >= 1, "选中了多个任务");
+        // Tag them in bulk
+        app.handle_key(key('t')).unwrap();
+        assert!(app.mode == Mode::Tagging);
+        for c in "bulk_tag".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let s = norm(&frame("8-bulk-tagged", &mut term, &mut app, &mut out));
+        assert!(s.contains("bulk_tag"), "批量打标签成功");
+
+        // Context Filter
+        app.handle_key(key('f')).unwrap();
+        assert!(app.mode == Mode::FilteringTag);
+        for c in "bulk_tag".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        assert_eq!(app.tag_filter.as_deref(), Some("bulk_tag"));
+        let s = norm(&frame("9-context-filter", &mut term, &mut app, &mut out));
+        assert!(s.contains("bulk_tag"), "过滤成功");
+        app.handle_key(kc(KeyCode::Esc)).unwrap();
+        assert_eq!(app.tag_filter, None);
+
+        // Weekly Review Wizard
+        app.handle_key(key('r')).unwrap();
+        assert!(app.is_reviewing);
+        assert_eq!(app.review_step, 1);
+        assert_eq!(app.view, View::Inbox);
+        let s = norm(&frame("10-review-step1", &mut term, &mut app, &mut out));
+        assert!(s.contains("每周回顾"));
+        
+        app.handle_key(key('R')).unwrap(); // Step 2
+        assert_eq!(app.review_step, 2);
+        assert_eq!(app.view, View::Projects);
+        
+        app.handle_key(key('R')).unwrap(); // Step 3
+        app.handle_key(key('R')).unwrap(); // Step 4
+        app.handle_key(key('R')).unwrap(); // Finish
+        assert!(!app.is_reviewing);
+        assert_eq!(app.view, View::Next);
     }
 
     #[test]

@@ -21,13 +21,49 @@ impl<'a> AppHandlers for App<'a> {
             return Ok(());
         }
         match self.mode {
-            Mode::Normal => self.handle_normal(key),
+            Mode::Normal | Mode::Visual => self.handle_normal(key),
             _ => self.handle_input(key),
         }
     }
 
     fn handle_normal(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
+            KeyCode::Esc => {
+                if self.is_reviewing {
+                    self.is_reviewing = false;
+                    self.review_step = 0;
+                    self.status_message = "Weekly Review cancelled".into();
+                    let _ = self.refresh();
+                    self.load_detail();
+                } else if self.mode == Mode::Visual {
+                    self.mode = Mode::Normal;
+                    self.visual_start_idx = None;
+                    self.selected_ids.clear();
+                    self.status_message = "Exited visual mode".into();
+                    let _ = self.refresh();
+                    self.load_detail();
+                } else if self.tag_filter.is_some() || !self.search_query.is_empty() {
+                    self.tag_filter = None;
+                    self.search_query.clear();
+                    self.status_message = "Cleared filters".into();
+                    let _ = self.refresh();
+                    self.load_detail();
+                }
+            }
+            KeyCode::Char('v') | KeyCode::Char('V') => {
+                if self.mode == Mode::Visual {
+                    self.mode = Mode::Normal;
+                    self.visual_start_idx = None;
+                    self.selected_ids.clear();
+                    self.status_message = "Exited visual mode".into();
+                } else {
+                    self.mode = Mode::Visual;
+                    self.visual_start_idx = Some(self.selected);
+                    self.update_visual_selection();
+                    self.status_message = "-- VISUAL --".into();
+                }
+                let _ = self.refresh();
+            }
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
             KeyCode::Char('h') => {
@@ -237,47 +273,10 @@ impl<'a> AppHandlers for App<'a> {
 
         match key.code {
             KeyCode::Esc => {
-                if self.is_reviewing {
-                    self.is_reviewing = false;
-                    self.review_step = 0;
-                    self.status_message = "Weekly Review cancelled".into();
-                    self.refresh()?;
-                    self.load_detail();
-                } else if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
-                    self.visual_start_idx = None;
-                    self.selected_ids.clear();
-                    self.status_message = "Exited visual mode".into();
-                    self.refresh()?;
-                    self.load_detail();
-                } else if self.tag_filter.is_some() || !self.search_query.is_empty() {
-                    self.mode = Mode::Normal;
-                    self.tag_filter = None;
-                    self.search_query.clear();
-                    self.input.clear();
-                    self.status_message = "Cleared filters".into();
-                    self.refresh()?;
-                    self.load_detail();
-                } else {
-                    self.mode = Mode::Normal;
-                    self.input.clear();
-                    self.refresh()?;
-                    self.load_detail();
-                }
-            }
-            KeyCode::Char('v') | KeyCode::Char('V') => {
-                if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
-                    self.visual_start_idx = None;
-                    self.selected_ids.clear();
-                    self.status_message = "Exited visual mode".into();
-                } else {
-                    self.mode = Mode::Visual;
-                    self.visual_start_idx = Some(self.selected);
-                    self.update_visual_selection();
-                    self.status_message = "-- VISUAL --".into();
-                }
-                let _ = self.refresh();
+                self.mode = Mode::Normal;
+                self.input.clear();
+                self.refresh()?;
+                self.load_detail();
             }
             KeyCode::Enter => {
                 let input = self.input.clone();
