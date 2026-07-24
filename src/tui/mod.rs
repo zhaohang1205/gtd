@@ -35,9 +35,9 @@ const LONG_HELP: &str =
      p projects tree · r weekly review · a capture · x mark done · w waiting · s someday\n\
      c schedule (<start> [;rrule=...]) · t add tag · A archive · Enter=next · q quit · ? toggle";
 
-/// The seven GTD statuses (data layer is unchanged). In the UI only Inbox and
-/// Next are "primary" views; the rest live as collapsible context groups in the
-/// left guide pane so they stay reachable without crowding the foreground.
+/// GTD 的七个状态（数据层不变）。界面里只有 Inbox 和 Next 是“主视图”，
+/// 其余状态作为可折叠的“上下文分组”放在左侧引导栏，既保持可达，
+/// 又不会把前台铺得太满造成心理负担。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
     Inbox,
@@ -65,7 +65,7 @@ impl View {
             View::Review => "Review",
         }
     }
-    /// Which GTD workflow stage this view maps to, used to highlight the guide.
+    /// 当前视图对应 GTD 工作流的哪个阶段，用于在引导栏高亮。
     fn stage(self) -> &'static str {
         match self {
             View::Inbox => "clarify",
@@ -87,7 +87,7 @@ impl View {
             View::Projects | View::Review => None,
         }
     }
-    /// The "context" groups shown (collapsed) in the left pane.
+    /// 在左侧栏中以“折叠”形式展示的上下文分组。
     fn context_groups() -> &'static [View] {
         &[
             View::Waiting,
@@ -117,9 +117,9 @@ enum Mode {
     Capturing,
     Tagging,
     Scheduling,
-    /// Step 1 of the inbox→next planning hook: asking for a project.
+    /// 计划钩子第 1 步：询问归属项目。
     PlanningProject,
-    /// Step 2 of the planning hook: asking for a time.
+    /// 计划钩子第 2 步：询问预计时间。
     PlanningTime,
 }
 
@@ -313,7 +313,7 @@ impl<'a> App<'a> {
         };
     }
 
-    /// True when a `next` task still lacks planning info (project and/or time).
+    /// 一个 next 任务若仍缺计划信息（项目 和/或 时间），返回 true。
     fn needs_planning(t: &Task) -> bool {
         let missing_project = t.parent_id.is_none();
         let missing_time = t.due_at.is_none() && t.scheduled_start_at.is_none();
@@ -335,8 +335,7 @@ impl<'a> App<'a> {
         }
     }
 
-    /// Set a task to `next`, then if it lacks planning info start the optional
-    /// step-by-step completion hook (skippable).
+    /// 把任务置为 next；若缺计划信息，则启动可选的分步补全钩子（可跳过）。
     fn act_next(&mut self, row: Row) -> Result<()> {
         let t = tasks::transition(self.conn, &row.id, "next")?;
         self.status_message = format!("{} -> next", &t.id[..8]);
@@ -429,7 +428,7 @@ impl<'a> App<'a> {
     fn handle_input(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Esc => {
-                // Esc during the planning hook skips the current (and remaining) step.
+                // 补全钩子里按 Esc 表示跳过当前（及后续）步骤。
                 self.mode = Mode::Normal;
                 self.input.clear();
                 self.refresh()?;
@@ -510,7 +509,7 @@ impl<'a> App<'a> {
                 let name = input.trim();
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if !name.is_empty() {
-                        // Accept a project id, id-prefix, or title.
+                        // 接受项目 id、id 前缀或标题。
                         if let Ok(pid) = tasks::resolve_project(self.conn, name) {
                             tasks::assign_project(self.conn, &row.id, &pid)?;
                             self.status_message = format!("{} -> project", &row.id[..8]);
@@ -520,7 +519,7 @@ impl<'a> App<'a> {
                         self.refresh()?;
                         self.load_detail();
                     }
-                    // Proceed to the time step regardless (skip if empty).
+                    // 无论是否填了项目，都进入时间步骤（为空则跳过）。
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         if let Ok(t) = tasks::get(self.conn, &row.id) {
                             if Self::needs_time(&t) {
@@ -571,7 +570,7 @@ impl<'a> App<'a> {
             .constraints([Constraint::Length(2), Constraint::Min(0), Constraint::Length(3)])
             .split(size);
 
-        // Header
+        // 顶栏
         let header = Line::from(vec![
             Span::styled(
                 " gtp ",
@@ -582,7 +581,7 @@ impl<'a> App<'a> {
         ]);
         f.render_widget(Paragraph::new(header), chunks[0]);
 
-        // Three panes: guide | list | detail
+        // 三栏：引导栏 | 列表 | 详情
         let body = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -599,7 +598,7 @@ impl<'a> App<'a> {
         }
         self.render_detail(f, body[2]);
 
-        // Footer
+        // 底栏
         let footer = if self.mode != Mode::Normal {
             match self.mode {
                 Mode::Capturing => format!(" New task: {}_", self.input),
@@ -801,7 +800,7 @@ fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row> {
     })
 }
 
-/// Launch the interactive TUI.
+/// 启动交互式 TUI。
 pub fn run(conn: &Connection) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -920,53 +919,53 @@ mod tests {
             s
         };
 
-        // 1) Three-pane layout: guide + list + detail
+        // 1) 三栏布局：引导栏 + 列表 + 详情
         let s = frame("1-initial-inbox", &mut term, &mut app, &mut out);
-        assert!(s.contains("Workflow"), "left guide pane should render");
-        assert!(s.contains("Contexts"), "context groups should render");
-        assert!(s.contains("Tasks · Inbox"), "center list pane title");
-        assert!(s.contains("Detail"), "right detail pane");
-        assert!(s.contains("Buy groceries"), "inbox lists seeded task");
-        assert!(s.contains("Waiting") && s.contains("Someday"), "context groups listed");
+        assert!(s.contains("Workflow"), "左侧引导栏应渲染");
+        assert!(s.contains("Contexts"), "上下文分组应渲染");
+        assert!(s.contains("Tasks · Inbox"), "中栏列表标题");
+        assert!(s.contains("Detail"), "右侧详情栏");
+        assert!(s.contains("Buy groceries"), "inbox 列出已灌入的任务");
+        assert!(s.contains("Waiting") && s.contains("Someday"), "上下文分组已列出");
 
-        // 2) vim nav: down, up
+        // 2) vim 导航：下、上
         app.handle_key(key('j')).unwrap();
         frame("2-nav-down", &mut term, &mut app, &mut out);
         app.handle_key(key('k')).unwrap();
         frame("3-nav-up", &mut term, &mut app, &mut out);
 
-        // 3) Ctrl+L switches focus to right pane (detail highlight off, list normal)
+        // 3) Ctrl+L 把焦点切到右栏（详情高亮关闭，列表正常）
         app.handle_key(ctr('l')).unwrap();
         frame("4-pane-right", &mut term, &mut app, &mut out);
-        assert!(app.pane == Pane::Right, "Ctrl+L moves focus to right pane");
+        assert!(app.pane == Pane::Right, "Ctrl+L 把焦点移到右栏");
         app.handle_key(ctr('h')).unwrap();
         frame("5-pane-center", &mut term, &mut app, &mut out);
-        assert!(app.pane == Pane::Center, "Ctrl+H moves focus back to center");
+        assert!(app.pane == Pane::Center, "Ctrl+H 把焦点移回中栏");
 
-        // 4) capture auto-jumps to Inbox
+        // 4) 收集后自动跳回 Inbox
         app.handle_key(key('a')).unwrap();
         let s = frame("6-capture-mode", &mut term, &mut app, &mut out);
-        assert!(s.contains("New task:"), "capture prompt");
+        assert!(s.contains("New task:"), "收集提示");
         for c in "Buy milk".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("7-after-capture", &mut term, &mut app, &mut out);
-        assert!(s.contains("Buy milk"), "newly captured task appears");
-        assert!(s.contains("· Inbox"), "capture jumps to Inbox");
+        assert!(s.contains("Buy milk"), "新收集的任务出现");
+        assert!(s.contains("· Inbox"), "收集后跳到 Inbox");
 
-        // 5) Enter -> next triggers planning hook (project step, then time step)
+        // 5) 回车 -> next 触发计划钩子（先问项目，再问时间）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("8-plan-project", &mut term, &mut app, &mut out);
-        assert!(s.contains("Project?"), "planning hook asks for project");
-        // skip project
+        assert!(s.contains("Project?"), "计划钩子询问项目");
+        // 跳过项目
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("9-plan-time", &mut term, &mut app, &mut out);
-        assert!(s.contains("Time?"), "planning hook asks for time");
-        // skip time -> back to normal; the planned task is now 'next' (left inbox)
+        assert!(s.contains("Time?"), "计划钩子询问时间");
+        // 跳过时间 -> 回到正常；被计划的任务已是 next（已离开 inbox）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let _ = frame("10-after-plan", &mut term, &mut app, &mut out);
-        assert!(app.mode == Mode::Normal, "planning hook finishes");
+        assert!(app.mode == Mode::Normal, "计划钩子结束");
         let in_next = tasks::list(
             &conn,
             &ListFilter {
@@ -978,9 +977,9 @@ mod tests {
         .unwrap()
         .iter()
         .any(|t| t.title == "Write homepage copy");
-        assert!(in_next, "planned task moved to next");
+        assert!(in_next, "被计划的任务已进入 next");
 
-        // 6) view switching via digits
+        // 6) 用数字键切换视图
         for (d, lbl, expect) in [
             ('3', "11-waiting", "Waiting"),
             ('4', "12-scheduled", "Scheduled"),
@@ -991,18 +990,18 @@ mod tests {
         ] {
             app.handle_key(key(d)).unwrap();
             let s = frame(lbl, &mut term, &mut app, &mut out);
-            assert!(s.contains(expect), "view {lbl} shows {expect}");
+            assert!(s.contains(expect), "视图 {lbl} 应显示 {expect}");
         }
 
-        // 7) projects + review
+        // 7) 项目树 + 周回顾
         app.handle_key(key('p')).unwrap();
         let s = frame("17-projects", &mut term, &mut app, &mut out);
-        assert!(s.contains("Website Redesign"), "projects view");
+        assert!(s.contains("Website Redesign"), "项目视图");
         app.handle_key(key('r')).unwrap();
         let s = frame("18-review", &mut term, &mut app, &mut out);
-        assert!(s.contains("Weekly Review"), "review view");
+        assert!(s.contains("Weekly Review"), "回顾视图");
 
-        // 8) capture from a non-inbox view auto-jumps to Inbox
+        // 8) 在非 inbox 视图收集后自动跳回 Inbox
         app.handle_key(key('3')).unwrap();
         app.handle_key(key('a')).unwrap();
         for c in "Captured from waiting".chars() {
@@ -1010,26 +1009,26 @@ mod tests {
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("19-capture-jump", &mut term, &mut app, &mut out);
-        assert!(s.contains("· Inbox"), "capture from waiting jumps to Inbox");
+        assert!(s.contains("· Inbox"), "从 waiting 视图收集后跳到 Inbox");
         assert!(s.contains("Captured from waiting"));
 
-        // 9) tag + schedule flow
+        // 9) 标签 + 排程流程
         app.handle_key(key('t')).unwrap();
         for c in "urgent".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("20-after-tag", &mut term, &mut app, &mut out);
-        assert!(s.contains("urgent"), "tag added");
+        assert!(s.contains("urgent"), "标签已添加");
         app.handle_key(key('c')).unwrap();
         for c in "+2h".chars() {
             app.handle_key(key(c)).unwrap();
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = frame("21-after-schedule", &mut term, &mut app, &mut out);
-        assert!(s.contains("sched"), "scheduled time shown");
+        assert!(s.contains("sched"), "显示排程时间");
 
-        // 10) archive + help toggle + quit
+        // 10) 归档 + 帮助切换 + 退出
         app.handle_key(key('4')).unwrap();
         app.handle_key(key('A')).unwrap();
         frame("22-after-archive", &mut term, &mut app, &mut out);
