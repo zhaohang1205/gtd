@@ -114,6 +114,7 @@ impl<'a> AppRender for App<'a> {
                 Mode::WaitingWhen => " Reminder time? (e.g. +1d, tomorrow 10:00) ",
                 Mode::PlanningProject => " Project? ",
                 Mode::PlanningTime => " Time? ",
+                Mode::ChecklistAdding => " 新增检查单 ",
                 Mode::Normal => "",
             };
             let text = format!(" {}_", self.input);

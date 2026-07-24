@@ -105,10 +105,10 @@ pub(crate) enum Mode {
     WaitingWho,
     WaitingWhen,
     Search,
-    /// 计划钩子第 1 步：询问归属项目。
     PlanningProject,
     /// 计划钩子第 2 步：询问预计时间。
     PlanningTime,
+    ChecklistAdding,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

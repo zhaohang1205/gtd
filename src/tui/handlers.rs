@@ -105,6 +105,38 @@ impl<'a> AppHandlers for App<'a> {
                 }
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
+            KeyCode::Char('C') => {
+                if self.items.get(self.selected).is_some() {
+                    self.mode = Mode::ChecklistAdding;
+                    self.input.clear();
+                }
+            }
+            KeyCode::Char(' ') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(mut task) = tasks::get(self.conn, &row.id) {
+                        if !task.checklist.is_empty() {
+                            let mut toggled_title = String::new();
+                            if let Some(item) = task.checklist.iter_mut().find(|i| !i.done) {
+                                item.done = true;
+                                toggled_title = item.title.clone();
+                            }
+                            if !toggled_title.is_empty() {
+                                let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
+                                self.status_message = format!("打卡: {}", toggled_title);
+                                self.load_detail();
+                            } else {
+                                // 全部已完成时，按空格则全部重置为未完成
+                                for item in task.checklist.iter_mut() {
+                                    item.done = false;
+                                }
+                                let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
+                                self.status_message = "重置检查单".to_string();
+                                self.load_detail();
+                            }
+                        }
+                    }
+                }
+            }
             KeyCode::Char('P') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     let _ = crate::commands::pomo::start(self.conn, &row.id);
@@ -334,6 +366,24 @@ impl<'a> AppHandlers for App<'a> {
                     self.refresh()?;
                     self.load_detail();
                 }
+            }
+            Mode::ChecklistAdding => {
+                if !input.is_empty() {
+                    if let Some(row) = self.items.get(self.selected).cloned() {
+                        if let Ok(mut task) = tasks::get(self.conn, &row.id) {
+                            task.checklist.push(task::ChecklistItem {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                title: input.to_string(),
+                                done: false,
+                            });
+                            let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
+                            self.status_message = format!("Checklist +1");
+                            self.load_detail();
+                        }
+                    }
+                }
+                self.mode = Mode::Normal;
+                self.input.clear();
             }
             Mode::Normal => {}
         }

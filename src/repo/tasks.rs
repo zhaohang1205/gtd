@@ -131,6 +131,16 @@ pub fn rename(conn: &Connection, id: &str, new_title: &str) -> Result<Task> {
     get(conn, id)
 }
 
+pub fn update_checklist(conn: &Connection, id: &str, checklist: &Vec<task::ChecklistItem>) -> Result<Task> {
+    let now = time::now_ms();
+    let cl_str = serde_json::to_string(checklist).unwrap_or_else(|_| "[]".to_string());
+    conn.execute(
+        "UPDATE tasks SET checklist=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![cl_str, now, id],
+    )?;
+    get(conn, id)
+}
+
 /// Transition a task from its current status to `to_status`,
 /// updating the relevant timestamp fields (time datafication).
 pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Result<Task> {
