@@ -7,6 +7,8 @@ INSERT OR IGNORE INTO tags (name, category, is_system, created_at) VALUES
   ('work',     'context', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
   ('learning', 'context', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
   ('errands',  'context', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
+  ('calls',    'context', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
+  ('computer', 'context', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
   ('p1',       'priority', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
   ('p2',       'priority', 1, CAST(strftime('%s','now') AS INTEGER) * 1000),
   ('p3',       'priority', 1, CAST(strftime('%s','now') AS INTEGER) * 1000);

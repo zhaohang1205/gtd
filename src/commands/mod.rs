@@ -7,6 +7,7 @@ use anyhow::Result;
 mod capture;
 mod list;
 mod project;
+pub mod pomo;
 mod show;
 mod status;
 mod tagging;
@@ -67,6 +68,19 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
         Command::Tree => project::tree(conn),
         Command::Review => project::review(conn),
         Command::Tags => tagging::list(conn),
+        Command::Pomo { action, task_id } => match action.as_str() {
+            "start" => {
+                if let Some(id) = task_id {
+                    pomo::start(conn, &id)
+                } else {
+                    anyhow::bail!("task_id required for start")
+                }
+            }
+            "stop" => pomo::stop(),
+            "daemon" => pomo::daemon(),
+            "waybar" => pomo::waybar(),
+            _ => anyhow::bail!("unknown pomo action"),
+        },
         Command::Tui => crate::tui::run(conn),
     }
 }

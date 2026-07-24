@@ -11,7 +11,7 @@ pub fn list_tags(conn: &Connection) -> Result<Vec<Tag>> {
         "SELECT id, name, category, is_system, color, icon, description, created_at \
          FROM tags ORDER BY category, name",
     )?;
-    let rows = stmt.query_map([], |r| Ok(row_to_tag(r)))?;
+    let rows = stmt.query_map([], |r| row_to_tag(r))?;
     let mut out = Vec::new();
     for t in rows {
         out.push(t?);
@@ -24,7 +24,7 @@ pub fn get_tag_by_name(conn: &Connection, name: &str) -> Result<Option<Tag>> {
         "SELECT id, name, category, is_system, color, icon, description, created_at \
          FROM tags WHERE name = ?1",
     )?;
-    let mut rows = stmt.query_map([name], |r| Ok(row_to_tag(r)))?;
+    let mut rows = stmt.query_map([name], |r| row_to_tag(r))?;
     Ok(rows.next().transpose()?.map(|t| t))
 }
 
@@ -47,6 +47,13 @@ pub fn find_or_create_tag(conn: &Connection, name: &str) -> Result<i64> {
 }
 
 pub fn add_tag_to_task(conn: &Connection, task_id: &str, tag_name: &str) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    add_tag_to_task_inner(&tx, task_id, tag_name)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub(crate) fn add_tag_to_task_inner(conn: &Connection, task_id: &str, tag_name: &str) -> Result<()> {
     let tag_id = find_or_create_tag(conn, tag_name)?;
     let exists: i64 = conn.query_row(
         "SELECT COUNT(*) FROM task_tags WHERE task_id = ?1 AND tag_id = ?2",
@@ -74,9 +81,10 @@ pub fn add_tag_to_task(conn: &Connection, task_id: &str, tag_name: &str) -> Resu
 }
 
 pub fn remove_tag_from_task(conn: &Connection, task_id: &str, tag_name: &str) -> Result<()> {
-    let tag = get_tag_by_name(conn, tag_name)?
+    let tx = conn.unchecked_transaction()?;
+    let tag = get_tag_by_name(&tx, tag_name)?
         .ok_or_else(|| Error::TagNotFound(tag_name.to_string()))?;
-    let deleted = conn.execute(
+    let deleted = tx.execute(
         "DELETE FROM task_tags WHERE task_id = ?1 AND tag_id = ?2",
         rusqlite::params![task_id, tag.id],
     )?;
@@ -85,13 +93,14 @@ pub fn remove_tag_from_task(conn: &Connection, task_id: &str, tag_name: &str) ->
     }
     let meta = format!("{{\"name\":\"{}\"}}", tag_name);
     log_event(
-        conn,
+        &tx,
         task_id,
         crate::model::event::EV_TAG_REMOVED,
         None,
         None,
         Some(&meta),
     )?;
+    tx.commit()?;
     Ok(())
 }
 
@@ -101,7 +110,7 @@ pub fn get_task_tags(conn: &Connection, task_id: &str) -> Result<Vec<Tag>> {
          FROM tags t JOIN task_tags tt ON tt.tag_id = t.id WHERE tt.task_id = ?1 \
          ORDER BY t.category, t.name",
     )?;
-    let rows = stmt.query_map([task_id], |r| Ok(row_to_tag(r)))?;
+    let rows = stmt.query_map([task_id], |r| row_to_tag(r))?;
     let mut out = Vec::new();
     for t in rows {
         out.push(t?);
@@ -109,15 +118,15 @@ pub fn get_task_tags(conn: &Connection, task_id: &str) -> Result<Vec<Tag>> {
     Ok(out)
 }
 
-fn row_to_tag(r: &rusqlite::Row) -> Tag {
-    Tag {
-        id: r.get(0).unwrap(),
-        name: r.get(1).unwrap(),
-        category: r.get(2).unwrap(),
-        is_system: r.get::<usize, i64>(3).unwrap() != 0,
-        color: r.get(4).unwrap(),
-        icon: r.get(5).unwrap(),
-        description: r.get(6).unwrap(),
-        created_at: r.get(7).unwrap(),
-    }
+fn row_to_tag(r: &rusqlite::Row) -> rusqlite::Result<Tag> {
+    Ok(Tag {
+        id: r.get(0)?,
+        name: r.get(1)?,
+        category: r.get(2)?,
+        is_system: r.get::<usize, i64>(3)? != 0,
+        color: r.get(4)?,
+        icon: r.get(5)?,
+        description: r.get(6)?,
+        created_at: r.get(7)?,
+    })
 }

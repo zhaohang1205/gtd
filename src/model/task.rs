@@ -1,10 +1,86 @@
-use serde::Serialize;
+use serde::{Serialize, Deserialize};
+use std::fmt;
+use std::str::FromStr;
 
-/// The seven GTD statuses. `inbox` is the entry point; everything else is a
-/// "clarified" state. Transitions are free among these seven by design
-/// (you can always re-clarify), except we never allow invalid strings.
-pub const STATUSES: &[&str] = &[
-    "inbox", "next", "waiting", "scheduled", "someday", "reference", "done",
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Status {
+    Inbox,
+    Next,
+    Waiting,
+    Scheduled,
+    Someday,
+    Reference,
+    Done,
+}
+
+impl fmt::Display for Status {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Status::Inbox => "inbox",
+            Status::Next => "next",
+            Status::Waiting => "waiting",
+            Status::Scheduled => "scheduled",
+            Status::Someday => "someday",
+            Status::Reference => "reference",
+            Status::Done => "done",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for Status {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "inbox" => Ok(Status::Inbox),
+            "next" => Ok(Status::Next),
+            "waiting" => Ok(Status::Waiting),
+            "scheduled" => Ok(Status::Scheduled),
+            "someday" => Ok(Status::Someday),
+            "reference" => Ok(Status::Reference),
+            "done" => Ok(Status::Done),
+            _ => Err(format!("Invalid status: {}", s)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskKind {
+    Action,
+    Project,
+}
+
+impl fmt::Display for TaskKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            TaskKind::Action => "action",
+            TaskKind::Project => "project",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl FromStr for TaskKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "action" => Ok(TaskKind::Action),
+            "project" => Ok(TaskKind::Project),
+            _ => Err(format!("Invalid kind: {}", s)),
+        }
+    }
+}
+
+pub const STATUSES: &[Status] = &[
+    Status::Inbox,
+    Status::Next,
+    Status::Waiting,
+    Status::Scheduled,
+    Status::Someday,
+    Status::Reference,
+    Status::Done,
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -12,9 +88,9 @@ pub struct Task {
     pub id: String,
     pub title: String,
     pub notes: String,
-    pub kind: String, // 'action' | 'project'
+    pub kind: TaskKind,
     pub parent_id: Option<String>,
-    pub status: String,
+    pub status: Status,
     pub rrule: Option<String>,
     pub created_at: i64,
     pub clarified_at: Option<i64>,
@@ -28,11 +104,11 @@ pub struct Task {
     pub updated_at: i64,
 }
 
-pub fn is_valid_status(s: &str) -> bool {
-    STATUSES.contains(&s)
+pub fn is_valid_status(s: &Status) -> bool {
+    STATUSES.contains(s)
 }
 
 /// Free transitions among the seven GTD states. Anything else is rejected.
-pub fn can_transition(from: &str, to: &str) -> bool {
-    is_valid_status(from) && is_valid_status(to) && from != to
+pub fn can_transition(from: &Status, to: &Status) -> bool {
+    from != to
 }

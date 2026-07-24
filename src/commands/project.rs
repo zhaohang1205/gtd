@@ -8,11 +8,12 @@ use anyhow::Result;
 pub fn create(conn: &Connection, name: &str, tags: &[String]) -> Result<()> {
     let input = tasks::CaptureInput {
         title: name.to_string(),
-        kind: "project".to_string(),
+        kind: crate::model::task::TaskKind::Project,
         parent_id: None,
-        status: "next".to_string(),
+        status: crate::model::task::Status::Next,
         due_at: None,
         tag_names: tags.to_vec(),
+        ..Default::default()
     };
     let p = tasks::create_capture(conn, &input)?;
     println!("project created [{}] {}", &p.id[..8], p.title);
@@ -29,7 +30,7 @@ pub fn tree(conn: &Connection) -> Result<()> {
         },
     )?
     .into_iter()
-    .filter(|t| t.kind == "project")
+    .filter(|t| t.kind == crate::model::task::TaskKind::Project)
     .collect::<Vec<_>>();
 
     for p in &projects {
@@ -66,11 +67,11 @@ pub fn review(conn: &Connection) -> Result<()> {
             tags: vec![],
         },
     )?;
-    let inbox = all.iter().filter(|t| t.status == "inbox").count();
-    let next = all.iter().filter(|t| t.status == "next").count();
-    let waiting = all.iter().filter(|t| t.status == "waiting").count();
-    let someday = all.iter().filter(|t| t.status == "someday").count();
-    let scheduled = all.iter().filter(|t| t.status == "scheduled").count();
+    let inbox = all.iter().filter(|t| t.status == crate::model::task::Status::Inbox).count();
+    let next = all.iter().filter(|t| t.status == crate::model::task::Status::Next).count();
+    let waiting = all.iter().filter(|t| t.status == crate::model::task::Status::Waiting).count();
+    let someday = all.iter().filter(|t| t.status == crate::model::task::Status::Someday).count();
+    let scheduled = all.iter().filter(|t| t.status == crate::model::task::Status::Scheduled).count();
 
     let now = time::now_ms();
     let horizon = 3 * 24 * 3600 * 1000i64;

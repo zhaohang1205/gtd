@@ -13,5 +13,5 @@ use clap::Parser;
 fn main() -> Result<()> {
     let cli = cli::Cli::parse();
     let conn = db::conn::open()?;
-    commands::run(cli.command, &conn)
+    commands::run(cli.command.unwrap_or(cli::Command::Tui), &conn)
 }

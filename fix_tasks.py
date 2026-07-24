@@ -1,4 +1,7 @@
-use rusqlite::Connection;
+import sys
+
+# Write src/repo/tasks.rs
+tasks_rs = """use rusqlite::Connection;
 use uuid::Uuid;
 
 use anyhow::Result;
@@ -19,6 +22,7 @@ pub struct CaptureInput {
     pub delegated_to: Option<String>,
     pub project_type: Option<task::ProjectType>,
     pub checklist: Vec<task::ChecklistItem>,
+    pub rrule: Option<String>,
 }
 
 impl Default for CaptureInput {
@@ -33,15 +37,16 @@ impl Default for CaptureInput {
             delegated_to: None,
             project_type: None,
             checklist: Vec::new(),
+            rrule: None,
         }
     }
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Task> {
     let mut stmt = conn.prepare(
-        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
-                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,project_type,checklist \
+        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\\
+                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\\
+                delegated_to,project_type,checklist \\
          FROM tasks WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map([id], |r| row_to_task(r))?;
@@ -70,9 +75,9 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO tasks \
-         (id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,due_at,updated_at,delegated_to,project_type,checklist) \
-         VALUES (?1,?2,'',?3,?4,?5,NULL,?6,?7,?8,?9,?10,?11,?12,?13)",
+        "INSERT INTO tasks \\
+         (id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,due_at,updated_at,delegated_to,project_type,checklist) \\
+         VALUES (?1,?2,'',?3,?4,?5,?14,?6,?7,?8,?9,?10,?11,?12,?13)",
         rusqlite::params![
             id,
             input.title,
@@ -86,7 +91,8 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
             now,
             input.delegated_to,
             pt_str,
-            cl_str
+            cl_str,
+            input.rrule
         ],
     )?;
     let status_str = status.to_string();
@@ -273,7 +279,7 @@ pub fn schedule(
             id
         ],
     )?;
-    let meta = rrule.as_deref().map(|r| format!("{{\"rrule\":\"{}\"}}", r));
+    let meta = rrule.as_deref().map(|r| format!("{{\\"rrule\\":\\"{}\\"}}", r));
     let from_str = from.to_string();
     log_event(
         &tx,
@@ -308,9 +314,9 @@ pub struct ListFilter {
 
 pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
     let mut sql = String::from(
-        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
-                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,project_type,checklist \
+        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\\
+                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\\
+                delegated_to,project_type,checklist \\
          FROM tasks WHERE archived_at IS NULL",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -336,10 +342,36 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(param_refs.as_slice(), |r| row_to_task(r))?;
-    let mut out = Vec::new();
+    let mut raw_out = Vec::new();
     for r in rows {
-        out.push(r?);
+        raw_out.push(r?);
     }
+
+    let mut out = Vec::new();
+    let mut sequential_seen = std::collections::HashSet::new();
+    let mut project_types = std::collections::HashMap::new();
+
+    for t in raw_out {
+        if let Some(pid) = &t.parent_id {
+            let pt = if let Some(pt) = project_types.get(pid) {
+                *pt
+            } else {
+                let pt = get(conn, pid).map(|p| p.project_type).unwrap_or(task::ProjectType::Parallel);
+                project_types.insert(pid.clone(), pt);
+                pt
+            };
+
+            if pt == task::ProjectType::Sequential {
+                if sequential_seen.contains(pid) {
+                    continue; // Skip subsequent tasks for sequential projects
+                } else {
+                    sequential_seen.insert(pid.clone());
+                }
+            }
+        }
+        out.push(t);
+    }
+
     Ok(out)
 }
 
@@ -363,7 +395,7 @@ pub fn resolve_project(conn: &Connection, key: &str) -> Result<String> {
 
 pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>> {
     let mut stmt = conn.prepare(
-        "SELECT id,task_id,event_type,from_status,to_status,at,meta \
+        "SELECT id,task_id,event_type,from_status,to_status,at,meta \\
          FROM task_events WHERE task_id = ?1 ORDER BY at ASC",
     )?;
     let rows = stmt.query_map([task_id], |r| {
@@ -414,3 +446,6 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         checklist: serde_json::from_str(&cl_str).unwrap_or_default(),
     })
 }
+"""
+with open("src/repo/tasks.rs", "w") as f:
+    f.write(tasks_rs)

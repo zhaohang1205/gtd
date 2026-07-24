@@ -4,7 +4,7 @@ use clap::{Parser, Subcommand};
 #[command(name = "gtp", version, about = "GTD terminal task manager", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -66,6 +66,11 @@ pub enum Command {
     Review,
     /// List all tags grouped by category
     Tags,
+    /// Pomodoro commands (start, stop, daemon, waybar)
+    Pomo {
+        action: String,
+        task_id: Option<String>,
+    },
     /// Launch the interactive TUI
     Tui,
 }

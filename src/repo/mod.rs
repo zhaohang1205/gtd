@@ -1,3 +1,4 @@
+pub mod pomodoro;
 pub mod tags;
 pub mod tasks;
 

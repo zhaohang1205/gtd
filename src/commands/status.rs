@@ -6,7 +6,8 @@ use anyhow::Result;
 
 pub fn to_status(conn: &Connection, id: &str, to: &str) -> Result<()> {
     let id = tasks::resolve_id(conn, id)?;
-    let t = tasks::transition(conn, &id, to)?;
+    let parsed_status: crate::model::task::Status = to.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let t = tasks::transition(conn, &id, parsed_status)?;
     println!("{} -> {}", &t.id[..8], t.status);
     if to == "next" {
         let missing_project = t.parent_id.is_none();

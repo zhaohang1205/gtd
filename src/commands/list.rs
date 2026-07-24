@@ -15,12 +15,13 @@ pub fn run(
     json: bool,
 ) -> Result<()> {
     if let Some(s) = status {
-        if !task::is_valid_status(s) {
+        let parsed_status: task::Status = s.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
+        if !task::is_valid_status(&parsed_status) {
             anyhow::bail!("invalid status: {}", s);
         }
     }
     let f = tasks::ListFilter {
-        status: status.map(|s| s.to_string()),
+        status: status.map(|s| s.parse().unwrap()),
         project: project.map(|s| s.to_string()),
         tags: tags_filter.to_vec(),
     };

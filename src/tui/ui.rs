@@ -6,29 +6,29 @@ use ratatui::{
 
 use crate::tui::App;
 
-pub fn status_letter(s: &str) -> &'static str {
+use crate::model::task::Status;
+
+pub fn status_letter(s: &Status) -> &'static str {
     match s {
-        "inbox" => ".",
-        "next" => ">",
-        "waiting" => "W",
-        "scheduled" => "#",
-        "someday" => "?",
-        "reference" => "*",
-        "done" => "x",
-        _ => " ",
+        Status::Inbox => ".",
+        Status::Next => ">",
+        Status::Waiting => "W",
+        Status::Scheduled => "#",
+        Status::Someday => "?",
+        Status::Reference => "*",
+        Status::Done => "x",
     }
 }
 
-pub fn status_color(s: &str) -> Color {
+pub fn status_color(s: &Status) -> Color {
     match s {
-        "inbox" => Color::Gray,
-        "next" => Color::Yellow,
-        "waiting" => Color::Blue,
-        "scheduled" => Color::Cyan,
-        "someday" => Color::Magenta,
-        "reference" => Color::White,
-        "done" => Color::Green,
-        _ => Color::Gray,
+        Status::Inbox => Color::Gray,
+        Status::Next => Color::Yellow,
+        Status::Waiting => Color::Blue,
+        Status::Scheduled => Color::Cyan,
+        Status::Someday => Color::Magenta,
+        Status::Reference => Color::White,
+        Status::Done => Color::Green,
     }
 }
 

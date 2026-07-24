@@ -36,18 +36,20 @@ pub fn run(
         Some(d) => Some(time::parse_time(d)?),
         None => None,
     };
-    let status = status.unwrap_or("inbox").to_string();
-    if !task::is_valid_status(&status) {
-        anyhow::bail!("invalid status: {}", status);
+    let status_str = status.unwrap_or("inbox");
+    let parsed_status: task::Status = status_str.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
+    if !task::is_valid_status(&parsed_status) {
+        anyhow::bail!("invalid status: {}", status_str);
     }
 
     let input = tasks::CaptureInput {
         title: title.to_string(),
-        kind: "action".to_string(),
+        kind: task::TaskKind::Action,
         parent_id,
-        status,
+        status: parsed_status,
         due_at,
         tag_names,
+        ..Default::default()
     };
     let t = tasks::create_capture(conn, &input)?;
 
