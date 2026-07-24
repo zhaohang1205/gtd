@@ -82,6 +82,10 @@ pub fn run(conn: &Connection) -> Result<()> {
 fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection) -> Result<()> {
     let mut app = App::new(conn)?;
     loop {
+        if app.needs_clear {
+            terminal.clear()?;
+            app.needs_clear = false;
+        }
         terminal.draw(|f| app.render(f))?;
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {

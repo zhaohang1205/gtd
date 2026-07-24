@@ -121,6 +121,7 @@ impl<'a> AppHandlers for App<'a> {
                         
                         crossterm::terminal::enable_raw_mode()?;
                         crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                        self.needs_clear = true;
                         self.load_detail();
                     }
                 }

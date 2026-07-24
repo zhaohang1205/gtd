@@ -154,6 +154,7 @@ pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
     pub(crate) selected_ids: std::collections::HashSet<String>,
     pub(crate) is_reviewing: bool,
     pub(crate) review_step: u8,
+    pub(crate) needs_clear: bool,
 }
 
 impl<'a> App<'a> {
@@ -179,6 +180,7 @@ impl<'a> App<'a> {
             selected_ids: std::collections::HashSet::new(),
             is_reviewing: false,
             review_step: 0,
+            needs_clear: false,
         };
         app.refresh()?;
         app.load_detail();
