@@ -26,17 +26,9 @@ use crate::time;
 
 mod ui;
 mod calendar;
-use ui::{build_list_items, status_color, status_letter};
+use ui::build_list_items;
 
-const SHORT_HELP: &str =
-    "  h/l 导航 · P  番茄钟 · a  收集 · w  等待 · s  将来 · c  排期 · t  标签 · x  完成 · D  归档 · ?  帮助 · q  退出 ";
-#[allow(dead_code)]
-const LONG_HELP: &str =
-    "   h/l 左右面板切换 · j/k 或 / 上下移动\n\
-     1  收件箱 · 2  下一步 · 3  等待中 · 4  已排程 · 5  将来/也许 · 6  参考资料 · 7  已完成\n\
-     p  项目树 · r  周回顾 · a  收集任务 · x  标记完成 · w  标记等待 · s  标记将来\n\
-     c  排期提醒 (<时间>) · t  添加标签 · D  归档 · Enter = 下一步 · P  启动番茄钟 · S 停止番茄钟\n\
-     ?  帮助开关 · q  退出应用";
+
 
 fn visual_len(s: &str) -> usize {
     s.chars().map(|c| {
@@ -87,16 +79,7 @@ impl View {
             View::Review => "Review",
         }
     }
-    /// 当前视图对应 GTD 工作流的哪个阶段，用于在引导栏高亮。
-    fn stage(self) -> &'static str {
-        match self {
-            View::Inbox => "clarify",
-            View::Next => "engage",
-            View::Projects => "organize",
-            View::Review => "reflect",
-            _ => "engage",
-        }
-    }
+
     /// 状态视图对应的状态字符串（用于查询与中文展示）。
     fn status(self) -> Option<&'static str> {
         match self {
@@ -110,20 +93,7 @@ impl View {
             View::Projects | View::Review => None,
         }
     }
-    /// 状态视图对应的枚举值（类型安全，供中文映射使用）。
-    fn status_enum(self) -> task::Status {
-        match self {
-            View::Inbox => task::Status::Inbox,
-            View::Next => task::Status::Next,
-            View::Waiting => task::Status::Waiting,
-            View::Scheduled => task::Status::Scheduled,
-            View::Someday => task::Status::Someday,
-            View::Reference => task::Status::Reference,
-            View::Done => task::Status::Done,
-            // Projects/Review 不是状态视图，落到这里不会被执行（仅状态视图调用）。
-            View::Projects | View::Review => task::Status::Inbox,
-        }
-    }
+
     /// 数字键 1-7 映射到的视图。
     fn from_digit(d: char) -> Option<View> {
         match d {
@@ -137,19 +107,7 @@ impl View {
             _ => None,
         }
     }
-    /// 全部 7 个状态视图，按 GTD 工作流顺序，用于“状态地图”整体呈现。
-    #[allow(dead_code)]
-    fn all_status_views() -> &'static [View] {
-        &[
-            View::Inbox,
-            View::Next,
-            View::Waiting,
-            View::Scheduled,
-            View::Someday,
-            View::Reference,
-            View::Done,
-        ]
-    }
+
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -231,7 +189,7 @@ impl<'a> App<'a> {
     }
 
     fn total_count(&self) -> usize {
-        tasks::list(
+        tasks::count(
             self.conn,
             &ListFilter {
                 status: None,
@@ -239,21 +197,19 @@ impl<'a> App<'a> {
                 tags: vec![],
             },
         )
-        .map(|v| v.len())
         .unwrap_or(0)
     }
 
     fn context_count(&self, v: View) -> usize {
         match v.status() {
-            Some(s) => tasks::list(
+            Some(s) => tasks::count(
                 self.conn,
                 &ListFilter {
-                    status: Some(s.parse::<task::Status>().unwrap()),
+                    status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                     project: None,
                     tags: vec![],
                 },
             )
-            .map(|v| v.len())
             .unwrap_or(0),
             None => 0,
         }
@@ -294,7 +250,7 @@ impl<'a> App<'a> {
                     let ts = tasks::list(
                         self.conn,
                         &ListFilter {
-                            status: Some(s.parse::<task::Status>().unwrap()),
+                            status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                             project: None,
                             tags: vec![],
                         },
@@ -354,13 +310,7 @@ impl<'a> App<'a> {
         self.load_detail();
     }
 
-    fn switch_pane(&mut self) {
-        if self.pane == Pane::Center {
-            self.pane = Pane::Right;
-        } else {
-            self.pane = Pane::Center;
-        }
-    }
+
 
     fn next_view(&mut self, delta: isize) {
         let views = [
@@ -525,14 +475,16 @@ impl<'a> App<'a> {
 
     fn handle_input(&mut self, key: KeyEvent) -> Result<()> {
         if self.mode == Mode::SchedulingCalendar {
-            if let Some((start, end)) = self.calendar.handle_key(key.code) {
-                use chrono::Datelike;
-                if start.year() == 1970 {
-                    self.mode = Mode::Normal;
-                } else {
-                    self.sched_dates = Some((start, end));
-                    self.mode = Mode::SchedulingTimeRRule;
-                    self.input.clear();
+            if let Some(res) = self.calendar.handle_key(key.code) {
+                match res {
+                    Some((start, end)) => {
+                        self.sched_dates = Some((start, end));
+                        self.mode = Mode::SchedulingTimeRRule;
+                        self.input.clear();
+                    }
+                    None => {
+                        self.mode = Mode::Normal;
+                    }
                 }
             }
             return Ok(());
@@ -616,8 +568,8 @@ impl<'a> App<'a> {
                     let start_time = chrono::NaiveTime::parse_from_str(start_t_str, "%H:%M").unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0,0,0).unwrap());
                     let end_time = chrono::NaiveTime::parse_from_str(end_t_str, "%H:%M").unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(23,59,59).unwrap());
 
-                    let start_ms = start_d.and_time(start_time).and_local_timezone(chrono::Local).unwrap().timestamp_millis();
-                    let end_ms = end_d.and_time(end_time).and_local_timezone(chrono::Local).unwrap().timestamp_millis();
+                    let start_ms = start_d.and_time(start_time).and_local_timezone(chrono::Local).single().map(|t| t.timestamp_millis()).unwrap_or_else(|| start_d.and_time(start_time).and_utc().timestamp_millis());
+                    let end_ms = end_d.and_time(end_time).and_local_timezone(chrono::Local).single().map(|t| t.timestamp_millis()).unwrap_or_else(|| end_d.and_time(end_time).and_utc().timestamp_millis());
 
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         let _ = tasks::schedule(

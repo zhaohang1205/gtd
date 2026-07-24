@@ -21,7 +21,7 @@ impl CalendarState {
         }
     }
 
-    pub fn handle_key(&mut self, code: crossterm::event::KeyCode) -> Option<(NaiveDate, NaiveDate)> {
+    pub fn handle_key(&mut self, code: crossterm::event::KeyCode) -> Option<Option<(NaiveDate, NaiveDate)>> {
         use crossterm::event::KeyCode;
         match code {
             KeyCode::Char('h') | KeyCode::Left => {
@@ -64,7 +64,7 @@ impl CalendarState {
                 if let Some(start) = self.start_date {
                     let end = self.cursor;
                     let (s, e) = if start <= end { (start, end) } else { (end, start) };
-                    return Some((s, e));
+                    return Some(Some((s, e)));
                 } else {
                     self.start_date = Some(self.cursor);
                 }
@@ -73,11 +73,7 @@ impl CalendarState {
                 if self.start_date.is_some() {
                     self.start_date = None;
                 } else {
-                    // special flag to exit calendar entirely
-                    return Some((
-                        NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
-                        NaiveDate::from_ymd_opt(1970, 1, 1).unwrap(),
-                    ));
+                    return Some(None);
                 }
             }
             _ => {}

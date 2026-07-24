@@ -134,19 +134,9 @@ pub fn rename(conn: &Connection, id: &str, new_title: &str) -> Result<Task> {
 /// Transition a task from its current status to `to_status`,
 /// updating the relevant timestamp fields (time datafication).
 pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Result<Task> {
-    if !task::is_valid_status(&to_status) {
-        return Err(Error::InvalidStatus(to_status.to_string()).into());
-    }
     let mut t = get(conn, id)?;
     let from = t.status;
     if from == to_status {
-        return Err(Error::InvalidTransition {
-            from: from.to_string(),
-            to: to_status.to_string(),
-        }
-        .into());
-    }
-    if !task::can_transition(&from, &to_status) {
         return Err(Error::InvalidTransition {
             from: from.to_string(),
             to: to_status.to_string(),
@@ -343,6 +333,30 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
     Ok(out)
 }
 
+pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
+    let mut sql = String::from("SELECT COUNT(*) FROM tasks WHERE archived_at IS NULL");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(s) = &f.status {
+        sql.push_str(" AND status = ?");
+        params.push(Box::new(s.to_string()));
+    }
+    if let Some(p) = &f.project {
+        let pid = resolve_project(conn, p)?;
+        sql.push_str(" AND parent_id = ?");
+        params.push(Box::new(pid));
+    }
+    for tag in &f.tags {
+        sql.push_str(
+            " AND id IN (SELECT task_id FROM task_tags tt JOIN tags g ON g.id=tt.tag_id WHERE g.name = ?)",
+        );
+        params.push(Box::new(tag.clone()));
+    }
+    let mut stmt = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let c: usize = stmt.query_row(param_refs.as_slice(), |r| r.get(0))?;
+    Ok(c)
+}
+
 /// Resolve a project reference (id, id-prefix, or title) to its project id.
 pub fn resolve_project(conn: &Connection, key: &str) -> Result<String> {
     // try as task id (exact or unique prefix)
@@ -395,9 +409,9 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         id: r.get(0)?,
         title: r.get(1)?,
         notes: r.get(2)?,
-        kind: kind_str.parse().unwrap(),
+        kind: kind_str.parse().unwrap_or(crate::model::task::TaskKind::Action),
         parent_id: r.get(4)?,
-        status: status_str.parse().unwrap(),
+        status: status_str.parse().unwrap_or(crate::model::task::Status::Inbox),
         rrule: r.get(6)?,
         created_at: r.get(7)?,
         clarified_at: r.get(8)?,

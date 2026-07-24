@@ -8,9 +8,6 @@ pub enum Error {
     #[error("tag not found: {0}")]
     TagNotFound(String),
 
-    #[error("invalid status: {0}")]
-    InvalidStatus(String),
-
     #[error("invalid status transition: {from} -> {to}")]
     InvalidTransition { from: String, to: String },
 

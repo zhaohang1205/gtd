@@ -114,15 +114,7 @@ pub struct ChecklistItem {
     pub done: bool,
 }
 
-pub const STATUSES: &[Status] = &[
-    Status::Inbox,
-    Status::Next,
-    Status::Waiting,
-    Status::Scheduled,
-    Status::Someday,
-    Status::Reference,
-    Status::Done,
-];
+
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {
@@ -146,13 +138,4 @@ pub struct Task {
     pub delegated_to: Option<String>,
     pub project_type: ProjectType,
     pub checklist: Vec<ChecklistItem>,
-}
-
-pub fn is_valid_status(s: &Status) -> bool {
-    STATUSES.contains(s)
-}
-
-/// Free transitions among the seven GTD states. Anything else is rejected.
-pub fn can_transition(from: &Status, to: &Status) -> bool {
-    from != to
 }

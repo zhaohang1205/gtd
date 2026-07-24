@@ -18,9 +18,7 @@ pub const EV_ORGANIZED: &str = "organized";
 pub const EV_STATUS_CHANGED: &str = "status_changed";
 pub const EV_SCHEDULED: &str = "scheduled";
 pub const EV_DUE: &str = "due";
-#[allow(dead_code)]
-/// Reserved for the Pomodoro phase (task `started` status), not used in v1.
-pub const EV_STARTED: &str = "started";
+
 pub const EV_COMPLETED: &str = "completed";
 pub const EV_ARCHIVED: &str = "archived";
 pub const EV_TAG_ADDED: &str = "tag_added";

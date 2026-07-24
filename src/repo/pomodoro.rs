@@ -6,7 +6,7 @@ use crate::model::pomodoro::PomoState;
 pub fn pomo_file_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
     path.push("gtp");
-    fs::create_dir_all(&path).ok();
+    let _ = fs::create_dir_all(&path);
     path.push("pomo.json");
     path
 }
@@ -17,7 +17,7 @@ pub fn get_state() -> Result<PomoState> {
         return Ok(PomoState::default());
     }
     let content = fs::read_to_string(&path)?;
-    let state = serde_json::from_str(&content).unwrap_or_else(|_| PomoState::default());
+    let state = serde_json::from_str(&content)?;
     Ok(state)
 }
 

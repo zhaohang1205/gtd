@@ -38,9 +38,6 @@ pub fn run(
     };
     let status_str = status.unwrap_or("inbox");
     let parsed_status: task::Status = status_str.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
-    if !task::is_valid_status(&parsed_status) {
-        anyhow::bail!("invalid status: {}", status_str);
-    }
 
     let input = tasks::CaptureInput {
         title: title.to_string(),

@@ -17,7 +17,7 @@ pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
 
     if current_version < 2 {
         let sql3 = include_str!("../../migrations/0003_add_gtd_advanced.sql");
-        let _ = conn.execute_batch(sql3);
+        conn.execute_batch(sql3)?;
         conn.pragma_update(None, "user_version", 2)?;
     }
 

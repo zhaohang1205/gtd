@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 use crate::commands::effective_due;
-use crate::model::task;
+
 use crate::repo::{tags, tasks};
 use crate::time;
 use anyhow::Result;
@@ -14,12 +14,6 @@ pub fn run(
     due_before: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    if let Some(s) = status {
-        let parsed_status: task::Status = s.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
-        if !task::is_valid_status(&parsed_status) {
-            anyhow::bail!("invalid status: {}", s);
-        }
-    }
     let f = tasks::ListFilter {
         status: status.map(|s| s.parse().unwrap()),
         project: project.map(|s| s.to_string()),
