@@ -17,7 +17,10 @@ pub fn run(
     status: Option<&str>,
     json: bool,
 ) -> Result<()> {
+    let quick_add = crate::parser::parse_quick_add(title);
+    
     let mut tag_names: Vec<String> = tags.to_vec();
+    tag_names.extend(quick_add.tags);
     if p1 {
         tag_names.push("p1".into());
     }
@@ -34,16 +37,22 @@ pub fn run(
     };
     let due_at = match due {
         Some(d) => Some(time::parse_time(d)?),
-        None => None,
+        None => {
+            if let Some(ref d) = quick_add.time_str {
+                Some(time::parse_time(d)?)
+            } else {
+                None
+            }
+        }
     };
     let status_str = status.unwrap_or("inbox");
     let parsed_status: task::Status = status_str.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
 
     let input = tasks::CaptureInput {
-        title: title.to_string(),
+        title: quick_add.title,
         kind: task::TaskKind::Action,
         parent_id,
-        status: parsed_status,
+        status: if parsed_status == task::Status::Inbox && due_at.is_some() { task::Status::Scheduled } else { parsed_status },
         due_at,
         tag_names,
         ..Default::default()

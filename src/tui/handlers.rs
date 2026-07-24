@@ -221,17 +221,23 @@ impl<'a> AppHandlers for App<'a> {
                 }
             }
             Mode::Capturing => {
-                let title = input.trim();
-                if !title.is_empty() {
+                let raw_input = input.trim();
+                if !raw_input.is_empty() {
+                    let quick_add = crate::parser::parse_quick_add(raw_input);
+                    let due_at = if let Some(ref t) = quick_add.time_str {
+                        time::parse_time(t).ok()
+                    } else {
+                        None
+                    };
                     let t = tasks::create_capture(
                         self.conn,
                         &CaptureInput {
-                            title: title.to_string(),
+                            title: quick_add.title,
                             kind: task::TaskKind::Action,
                             parent_id: None,
-                            status: task::Status::Inbox,
-                            due_at: None,
-                            tag_names: vec![],
+                            status: if due_at.is_some() { task::Status::Scheduled } else { task::Status::Inbox },
+                            due_at,
+                            tag_names: quick_add.tags,
                             ..Default::default()
                         },
                     )?;

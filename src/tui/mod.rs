@@ -122,6 +122,9 @@ mod tests {
     use crate::repo::tasks::{self, CaptureInput};
     use ratatui::backend::TestBackend;
     use std::io::Write;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use crate::tui::app::Mode;
+    use crate::repo::tasks::ListFilter;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty())
@@ -268,6 +271,7 @@ mod tests {
                 status: Some(task::Status::Next),
                 project: None,
                 tags: vec![],
+                query: None,
             },
         )
         .unwrap()

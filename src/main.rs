@@ -6,6 +6,7 @@ mod model;
 mod repo;
 mod time;
 mod tui;
+mod parser;
 
 use anyhow::Result;
 use clap::Parser;
