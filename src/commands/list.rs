@@ -38,8 +38,8 @@ pub fn run(
         return Ok(());
     }
     println!(
-        "{:<8} {:<9} {:<17} {:<22} {}",
-        "ID", "STATUS", "DUE", "TAGS", "TITLE"
+        "{:<8} {:<9} {:<17} {:<22} TITLE",
+        "ID", "STATUS", "DUE", "TAGS"
     );
     for t in &tasks_vec {
         let tags_s = tags::get_task_tags(conn, &t.id)?

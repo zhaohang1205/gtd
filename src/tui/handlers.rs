@@ -12,6 +12,7 @@ pub(crate) trait AppHandlers {
     fn handle_normal(&mut self, key: KeyEvent) -> Result<()>;
     fn handle_input(&mut self, key: KeyEvent) -> Result<()>;
     fn confirm_input(&mut self, mode: Mode, input: &str) -> Result<()>;
+    fn restore_selected(&mut self) -> Result<()>;
 }
 
 impl<'a> AppHandlers for App<'a> {
@@ -110,8 +111,8 @@ impl<'a> AppHandlers for App<'a> {
                 self.set_view(View::Inbox);
                 self.status_message = "Weekly Review started".into();
             }
-            KeyCode::Char('R') => {
-                if self.is_reviewing {
+            KeyCode::Char('R')
+                if self.is_reviewing => {
                     self.review_step += 1;
                     match self.review_step {
                         2 => self.set_view(View::Projects),
@@ -125,7 +126,6 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                 }
-            }
             KeyCode::Char('a') => {
                 self.mode = Mode::Capturing;
                 self.input.clear();
@@ -177,6 +177,54 @@ impl<'a> AppHandlers for App<'a> {
                 self.mode = Mode::Tagging;
                 self.input.clear();
             }
+            KeyCode::Char('d') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(t) = tasks::get(self.conn, &row.id) {
+                        self.mode = Mode::EditingDue;
+                        self.input = time::format_local(t.due_at);
+                        if self.input == "-" {
+                            self.input.clear();
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('L') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(t) = tasks::get(self.conn, &row.id) {
+                        self.mode = Mode::EditingRrule;
+                        self.input = t.rrule.clone().unwrap_or_default();
+                    }
+                }
+            }
+            KeyCode::Char('b') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    // 复用规划钩子中的项目归属流程 (空/Esc 跳过)
+                    self.mode = Mode::PlanningProject;
+                    self.input.clear();
+                    self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过)", &row.id[..8]);
+                }
+            }
+            KeyCode::Char('W') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(t) = tasks::get(self.conn, &row.id) {
+                        self.mode = Mode::EditingDelegated;
+                        self.input = t.delegated_to.clone().unwrap_or_default();
+                    }
+                }
+            }
+            KeyCode::Char('T') => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    if let Ok(t) = tasks::get(self.conn, &row.id) {
+                        if t.kind == task::TaskKind::Project {
+                            self.mode = Mode::EditingProjectType;
+                            self.input.clear();
+                            self.status_message = format!("{} 项目类型? (parallel/sequential, 空/Esc 跳过)", &row.id[..8]);
+                        } else {
+                            self.status_message = "仅项目可设置项目类型".into();
+                        }
+                    }
+                }
+            }
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
             KeyCode::Char('A') | KeyCode::Char('D') | KeyCode::Delete => {
@@ -186,25 +234,22 @@ impl<'a> AppHandlers for App<'a> {
                 } else if let Some(row) = self.items.get(self.selected).cloned() {
                     ids.push(row.id);
                 }
-                for id in &ids {
-                    let _ = tasks::archive(self.conn, id);
+                if ids.is_empty() {
+                    return Ok(());
                 }
-                self.status_message = format!("archived {} items", ids.len());
-                if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
-                    self.selected_ids.clear();
-                    self.visual_start_idx = None;
-                }
-                self.refresh()?;
-                self.load_detail();
+                self.pending_archive_ids = ids;
+                self.mode = Mode::ConfirmArchive;
+                self.status_message = format!(
+                    "确认归档 {} 项? (y/Enter 确认, n/Esc 取消)",
+                    self.pending_archive_ids.len()
+                );
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
-            KeyCode::Char('C') => {
-                if self.items.get(self.selected).is_some() {
+            KeyCode::Char('C')
+                if self.items.get(self.selected).is_some() => {
                     self.mode = Mode::ChecklistAdding;
                     self.input.clear();
                 }
-            }
             KeyCode::Char(' ') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(mut task) = tasks::get(self.conn, &row.id) {
@@ -245,6 +290,9 @@ impl<'a> AppHandlers for App<'a> {
                 self.mode = Mode::Search;
                 self.input = self.search_query.clone();
             }
+            KeyCode::Char('u') => {
+                let _ = self.restore_selected();
+            }
             KeyCode::Char('f') => {
                 self.mode = Mode::FilteringTag;
                 self.input = self.tag_filter.clone().unwrap_or_default();
@@ -267,6 +315,37 @@ impl<'a> AppHandlers for App<'a> {
                         self.mode = Mode::Normal;
                     }
                 }
+            }
+            return Ok(());
+        }
+
+        if self.mode == Mode::ConfirmArchive {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    let ids = std::mem::take(&mut self.pending_archive_ids);
+                    let mut count = 0;
+                    for id in &ids {
+                        if tasks::archive(self.conn, id).is_ok() {
+                            count += 1;
+                        }
+                    }
+                    self.mode = Mode::Normal;
+                    self.status_message = format!("archived {} items", count);
+                    if self.mode == Mode::Visual {
+                        self.selected_ids.clear();
+                        self.visual_start_idx = None;
+                    }
+                    self.refresh()?;
+                    self.load_detail();
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.pending_archive_ids.clear();
+                    self.mode = Mode::Normal;
+                    self.status_message = "归档已取消".into();
+                    self.refresh()?;
+                    self.load_detail();
+                }
+                _ => {}
             }
             return Ok(());
         }
@@ -329,6 +408,71 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             }
+            Mode::EditingDue => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    let inp = input.trim();
+                    if inp.is_empty() {
+                        tasks::set_due(self.conn, &row.id, None)?;
+                        self.status_message = format!("due cleared {}", &row.id[..8]);
+                    } else {
+                        match time::parse_time(inp) {
+                            Ok(ms) => {
+                                tasks::set_due(self.conn, &row.id, Some(ms))?;
+                                self.status_message = format!("due set {}", &row.id[..8]);
+                            }
+                            Err(e) => self.status_message = format!("bad time: {}", e),
+                        }
+                    }
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
+            Mode::EditingRrule => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    let inp = input.trim();
+                    let rrule = if inp.is_empty() { None } else { Some(inp.to_string()) };
+                    let set = rrule.is_some();
+                    tasks::set_rrule(self.conn, &row.id, rrule)?;
+                    self.status_message = if set {
+                        format!("rrule set {}", &row.id[..8])
+                    } else {
+                        format!("rrule cleared {}", &row.id[..8])
+                    };
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
+            Mode::EditingDelegated => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    let inp = input.trim();
+                    let who = if inp.is_empty() { None } else { Some(inp.to_string()) };
+                    let set = who.is_some();
+                    tasks::set_delegated(self.conn, &row.id, who)?;
+                    self.status_message = if set {
+                        format!("delegated {}", &row.id[..8])
+                    } else {
+                        format!("delegated cleared {}", &row.id[..8])
+                    };
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
+            Mode::EditingProjectType => {
+                if let Some(row) = self.items.get(self.selected).cloned() {
+                    let inp = input.trim();
+                    if !inp.is_empty() {
+                        match inp.parse::<task::ProjectType>() {
+                            Ok(pt) => {
+                                tasks::set_project_type(self.conn, &row.id, pt)?;
+                                self.status_message = format!("project type {}", &row.id[..8]);
+                            }
+                            Err(e) => self.status_message = format!("bad type: {}", e),
+                        }
+                    }
+                    self.refresh()?;
+                    self.load_detail();
+                }
+            }
             Mode::Capturing => {
                 let raw_input = input.trim();
                 if !raw_input.is_empty() {
@@ -366,7 +510,7 @@ impl<'a> AppHandlers for App<'a> {
                     
                     let mut count = 0;
                     for id in ids {
-                        if let Ok(_) = tags::add_tag_to_task(self.conn, &id, name) {
+                        if tags::add_tag_to_task(self.conn, &id, name).is_ok() {
                             count += 1;
                         }
                     }
@@ -383,9 +527,7 @@ impl<'a> AppHandlers for App<'a> {
                     let parts: Vec<&str> = input.splitn(2, ';').collect();
                     let time_part = parts[0].trim();
                     let rrule_part = parts.get(1).map(|s| s.trim_start_matches("rrule=").trim().to_string());
-                    let final_rrule = if let Some(r) = rrule_part {
-                        if r.is_empty() { None } else { Some(r) }
-                    } else { None };
+                    let final_rrule = rrule_part.filter(|r| !r.is_empty());
 
                     let (start_t_str, end_t_str) = if time_part.contains('-') {
                         let mut s = time_part.splitn(2, '-');
@@ -483,7 +625,7 @@ impl<'a> AppHandlers for App<'a> {
                     if !start_s.is_empty() {
                         match time::parse_time(start_s) {
                             Ok(start_ms) => {
-                                tasks::set_due(self.conn, &row.id, start_ms)?;
+                                tasks::set_due(self.conn, &row.id, Some(start_ms))?;
                                 self.status_message = format!("due set {}", &row.id[..8]);
                             }
                             Err(e) => self.status_message = format!("bad time: {}", e),
@@ -504,7 +646,7 @@ impl<'a> AppHandlers for App<'a> {
                                 done: false,
                             });
                             let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
-                            self.status_message = format!("Checklist +1");
+                            self.status_message = "Checklist +1".to_string();
                             self.load_detail();
                         }
                     }
@@ -512,9 +654,24 @@ impl<'a> AppHandlers for App<'a> {
                 self.mode = Mode::Normal;
                 self.input.clear();
             }
-            Mode::Normal | Mode::Visual => {}
+            Mode::Normal | Mode::Visual | Mode::ConfirmArchive => {}
         }
         Ok(())
     }
 
+    /// Restore the currently selected archived task (only meaningful in the
+    /// Archived view). No-op outside that view or if nothing is selected.
+    fn restore_selected(&mut self) -> Result<()> {
+        if self.view != View::Archived {
+            return Ok(());
+        }
+        if let Some(row) = self.items.get(self.selected).cloned() {
+            if tasks::unarchive(self.conn, &row.id).is_ok() {
+                self.status_message = format!("restored {}", &row.id[..8]);
+                self.refresh()?;
+                self.load_detail();
+            }
+        }
+        Ok(())
+    }
 }

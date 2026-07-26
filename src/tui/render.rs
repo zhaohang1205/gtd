@@ -1,7 +1,7 @@
 use super::app::{App, Mode, Pane, View, pad_right};
 use super::{status_cn, next_hint};
 use ratatui::{layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, Paragraph}, Frame};
-use crate::model::task;
+use crate::model::{event, task};
 use crate::time;
 use crate::repo::tasks::{self, ListFilter};
 use super::ui::build_list_items;
@@ -66,9 +66,6 @@ impl<'a> AppRender for App<'a> {
         };
 
         self.render_guide(f, left_chunks[0]);
-        if self.show_help {
-            self.render_help_drawer(f, left_chunks[1]);
-        }
 
         match self.view {
             View::Review => self.render_review(f, body[1]),
@@ -120,7 +117,7 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(Paragraph::new(status_left).style(Style::default().bg(Color::DarkGray)), status_layout[0]);
         f.render_widget(Paragraph::new(status_right).alignment(ratatui::layout::Alignment::Right).style(Style::default().bg(Color::DarkGray)), status_layout[1]);
 
-        if self.mode != Mode::Normal && self.mode != Mode::SchedulingCalendar {
+        if self.mode != Mode::Normal && self.mode != Mode::SchedulingCalendar && self.mode != Mode::ConfirmArchive {
             let title = match self.mode {
                 Mode::Search => " Search Tasks (Title / Notes) ",
                 Mode::EditingTitle => " Edit title ",
@@ -134,7 +131,11 @@ impl<'a> AppRender for App<'a> {
                 Mode::PlanningTime => " Time? ",
                 Mode::ChecklistAdding => " 新增检查单 ",
                 Mode::FilteringTag => " 过滤标签 (Context) ",
-                Mode::Normal | Mode::Visual => "",
+                Mode::EditingDue => " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
+                Mode::EditingRrule => " 循环规则? (空=清除, 如 FREQ=WEEKLY;BYDAY=SA,SU) ",
+                Mode::EditingDelegated => " 委派给? (空=清除) ",
+                Mode::EditingProjectType => " 项目类型? (parallel/sequential) ",
+                Mode::Normal | Mode::Visual | Mode::ConfirmArchive => "",
             };
             
             let mut text_lines = vec![Line::from(format!(" {}_", self.input))];
@@ -156,24 +157,40 @@ impl<'a> AppRender for App<'a> {
             let area = self.centered_rect(60, 15, size);
             self.calendar.render(f, area);
         }
+
+        // 帮助弹窗最后绘制，作为置顶模态层（ratatui 无图层概念，后画者覆盖先画者）
+        if self.show_help {
+            self.render_help_drawer(f, self.centered_rect(76, 52, size));
+        }
     }
 
     fn render_help_drawer(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-        let block = Block::default()
+        // 先擦除底层内容（ratatui 无透明/图层，必须显式 Clear 否则会透出后方文字）
+        f.render_widget(ratatui::widgets::Clear, area);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(23), Constraint::Min(0)])
+            .split(area);
+
+        // 上：快捷键
+        let keys_block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
             .title(" 快捷键 (F1/?) ");
-            
-        let mut rows = vec![];
         let keys = [
             ("h/l", "切换面板"),
             ("j/k", "上下移动"),
-            ("1-7", "切换主视图"),
-            ("/", "全局搜索"),
+            ("1-8", "切换主视图 (8=归档箱)"),
+            ("/", "全局搜索 (标题/备注)"),
             ("f", "情境过滤 (Context)"),
             ("a", "捕获到收件箱"),
-            ("n", "编辑备注($EDITOR)"),
+            ("n", "编辑备注 ($EDITOR)"),
             ("e", "编辑标题"),
+            ("d", "修改截止时间 (due)"),
+            ("L", "修改循环规则 (rrule)"),
+            ("b", "修改所属项目"),
+            ("W", "修改委派对象"),
+            ("T", "修改项目类型 (项目)"),
             ("C", "新增子任务"),
             ("SPC", "完成子任务"),
             ("p", "切换到项目视图"),
@@ -183,22 +200,62 @@ impl<'a> AppRender for App<'a> {
             ("w", "标记为等待中"),
             ("s", "标记为将来/也许"),
             ("x", "标记为已完成"),
-            ("A/D", "归档任务"),
-            ("P", "开始番茄钟"),
-            ("S", "停止番茄钟"),
+            ("A/D", "归档任务 (y 确认 / n 取消)"),
+            ("u", "归档箱中恢复任务"),
+            ("P/S", "开始 / 停止番茄钟"),
             ("q", "退出"),
         ];
-
+        let mut rows = vec![];
         for (k, desc) in keys.iter() {
             rows.push(ratatui::widgets::Row::new(vec![
                 ratatui::text::Line::from(Span::styled(format!("{:>5} ", k), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
                 ratatui::text::Line::from(Span::raw(*desc)),
             ]));
         }
-
         let widths = [Constraint::Length(6), Constraint::Min(0)];
-        let table = ratatui::widgets::Table::new(rows, widths).block(block).column_spacing(1);
-        f.render_widget(table, area);
+        let table = ratatui::widgets::Table::new(rows, widths)
+            .block(keys_block)
+            .column_spacing(1);
+        f.render_widget(table, chunks[0]);
+
+        // 下：语法说明
+        let syntax_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow))
+            .title(" 语法说明 ");
+        let syntax = vec![
+            Line::from(Span::styled("快速录入 (a)", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("  @标签    添加情境/优先级, 如 @work @p1 (可多个)"),
+            Line::from("  ~时间    设置截止, 见下方时间语法"),
+            Line::from("  例: a买牛奶 @home ~tomorrow   /   a写周报 @work @p1 ~+3d"),
+            Line::from(""),
+            Line::from(Span::styled("时间语法 (~ 与排期 c)", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("  now / +2h +30m +1d +1w   相对时间"),
+            Line::from("  today / tomorrow [HH:MM]   今天/明天 (默认 00:00)"),
+            Line::from("  HH:MM                    今天该时刻, 如 18:00"),
+            Line::from("  2026-07-24 / 2026-07-24 14:30   绝对日期/时间"),
+            Line::from(""),
+            Line::from(Span::styled("周期 / 循环任务 (习惯)", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("  先 c 排期选日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务"),
+            Line::from("  循环任务标记为完成时不会消失, 而是自动顺延到下一周期"),
+            Line::from("  (状态回到 Scheduled, 时间推进到下一个发生点, 记 habit_completed)"),
+            Line::from("  FREQ=DAILY|WEEKLY|MONTHLY      频率"),
+            Line::from("  INTERVAL=2                      间隔, 如每 2 周"),
+            Line::from("  BYDAY=SA,SU                     周几 (MO TU WE TH FR SA SU)"),
+            Line::from("  COUNT=10 / UNTIL=2026-12-31     终止条件(做到第N次/到某日停)"),
+            Line::from("  例: ;FREQ=WEEKLY;BYDAY=SA,SU    ;FREQ=DAILY;COUNT=30"),
+            Line::from("  在列表/排序中, 循环任务按'下一个发生时间'参与排期"),
+            Line::from(""),
+            Line::from(Span::styled("其他", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from("  等待 w 后可填 [谁/何时], 如 w → Alice → +1d"),
+            Line::from("  子任务 C 新增, SPC 依次打卡, 全部完成自动重置"),
+            Line::from("  归档箱(8)内 u 恢复; 归档需 y 确认"),
+            Line::from("  按 F1/? 关闭本帮助"),
+        ];
+        let para = Paragraph::new(syntax)
+            .block(syntax_block)
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        f.render_widget(para, chunks[1]);
     }
 
     fn centered_rect(&self, percent_x: u16, height: u16, r: Rect) -> Rect {
@@ -253,6 +310,7 @@ impl<'a> AppRender for App<'a> {
                     View::Done => ("", "已完成"),
                     View::Projects => ("", "项目树"),
                     View::Review => ("", "周回顾"),
+                    View::Archived => ("", "归档箱"),
                 };
                 let padded_label = pad_right(label, 10);
 
@@ -283,11 +341,12 @@ impl<'a> AppRender for App<'a> {
             "  [Modules]",
             Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
         )));
-        for (key, v) in &[('p', View::Projects), ('r', View::Review)] {
+        for (key, v) in &[('p', View::Projects), ('r', View::Review), ('8', View::Archived)] {
             let active = cur == *v;
             let (icon, label) = match v {
                 View::Projects => ("", "项目树"),
                 View::Review => ("", "周回顾"),
+                View::Archived => ("", "归档箱"),
                 _ => ("", ""),
             };
             let padded_label = pad_right(label, 10);
@@ -359,7 +418,7 @@ impl<'a> AppRender for App<'a> {
                 ]));
                 rows.push(ratatui::widgets::Row::new(vec![
                     Line::from(" 状态"),
-                    Line::from(status_cn(d.task.status.clone())),
+                    Line::from(status_cn(d.task.status)),
                 ]));
                 if let Some(p) = &d.task.parent_id {
                     rows.push(ratatui::widgets::Row::new(vec![
@@ -442,7 +501,7 @@ impl<'a> AppRender for App<'a> {
                     ]));
                 }
 
-                let pomo_count = d.events.iter().filter(|e| e.event_type == "pomodoro").count();
+                let pomo_count = d.events.iter().filter(|e| e.event_type == event::EV_POMODORO).count();
                 if pomo_count > 0 {
                     let tomatoes = " ".repeat(pomo_count);
                     rows.push(ratatui::widgets::Row::new(vec![
@@ -451,40 +510,62 @@ impl<'a> AppRender for App<'a> {
                     ]));
                 }
 
-                rows.push(ratatui::widgets::Row::new(vec![Line::from(""), Line::from("")]));
-                rows.push(ratatui::widgets::Row::new(vec![
-                    Line::from(Span::styled(" 时间线", Style::default().add_modifier(Modifier::UNDERLINED))),
-                    Line::from(""),
-                ]));
-                
+                let table_h = (rows.len() as u16) + 2; // 行数 + 上下边框
+                let detail_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(table_h), Constraint::Min(0)])
+                    .split(area);
+                let top = detail_chunks[0];
+                let bottom = detail_chunks[1];
+
+                let widths = [Constraint::Length(12), Constraint::Min(0)];
+                let table = ratatui::widgets::Table::new(rows, widths).block(block);
+                f.render_widget(table, top);
+
+                // 备注 + 时间线：多行文本，单独用可换行的 Paragraph 渲染（Table 行不换行会裁切）
+                let mut detail_lines: Vec<Line> = vec![];
+                if d.task.notes.trim().is_empty() {
+                    detail_lines.push(Line::from(Span::styled("备注: -", Style::default().fg(Color::DarkGray))));
+                } else {
+                    detail_lines.push(Line::from(Span::styled("备注:", Style::default().add_modifier(Modifier::BOLD))));
+                    for ln in d.task.notes.split('\n') {
+                        detail_lines.push(Line::from(format!("  {}", ln)));
+                    }
+                }
+                detail_lines.push(Line::from(""));
+                detail_lines.push(Line::from(Span::styled("时间线", Style::default().add_modifier(Modifier::UNDERLINED))));
                 for e in d.events.iter().rev().take(8).rev() {
                     let event_cn = match e.event_type.as_str() {
                         "created" => "创建任务",
                         "status_change" => "状态流转",
-                        "pomodoro" => "完成专注",
+                        event::EV_POMODORO => "完成专注",
+                        event::EV_HABIT_COMPLETED => "习惯完成",
+                        event::EV_RESTORED => "已恢复",
                         _ => &e.event_type,
                     };
-                    
+
                     let from_cn = e.from_status.as_deref().unwrap_or("-").parse::<crate::model::task::Status>().map(status_cn).unwrap_or("-");
                     let to_cn = e.to_status.as_deref().unwrap_or("-").parse::<crate::model::task::Status>().map(status_cn).unwrap_or("-");
-                    
+
                     let action = if e.event_type == "status_change" {
                         format!("{} -> {}", from_cn, to_cn)
-                    } else if e.event_type == "pomodoro" {
+                    } else if e.event_type == event::EV_POMODORO {
                         "🍅 +1".to_string()
                     } else {
                         "".to_string()
                     };
 
-                    rows.push(ratatui::widgets::Row::new(vec![
-                        Line::from(time::format_local(Some(e.at))),
-                        Line::from(format!("{} {}", event_cn, action)),
-                    ]));
+                    detail_lines.push(Line::from(format!("  {}  {} {}", time::format_local(Some(e.at)), event_cn, action)));
                 }
 
-                let widths = [Constraint::Length(12), Constraint::Min(0)];
-                let table = ratatui::widgets::Table::new(rows, widths).block(block);
-                f.render_widget(table, area);
+                let detail_block = Block::default()
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(border_color))
+                    .title(" 备注 / 时间线 ");
+                let detail_para = Paragraph::new(detail_lines)
+                    .block(detail_block)
+                    .wrap(ratatui::widgets::Wrap { trim: false });
+                f.render_widget(detail_para, bottom);
             }
         }
     }

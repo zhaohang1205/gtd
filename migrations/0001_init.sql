@@ -27,8 +27,9 @@ CREATE INDEX IF NOT EXISTS idx_tasks_parent ON tasks(parent_id);
 CREATE TABLE IF NOT EXISTS task_events (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   task_id     TEXT    NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  event_type  TEXT    NOT NULL,  -- captured|clarified|organized|status_changed|
-                                -- scheduled|started|completed|archived|tag_added|tag_removed
+  event_type  TEXT    NOT NULL,  -- event-type consts live in src/model/event.rs and must stay in sync:
+                                -- captured|clarified|organized|status_changed|scheduled|
+                                -- completed|archived|restored|tag_added|tag_removed|habit_completed|pomodoro
   from_status TEXT,
   to_status   TEXT,
   at          INTEGER NOT NULL, -- UTC ms

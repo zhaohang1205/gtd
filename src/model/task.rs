@@ -74,16 +74,13 @@ impl FromStr for TaskKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default)]
 pub enum ProjectType {
+    #[default]
     Parallel,
     Sequential,
 }
 
-impl Default for ProjectType {
-    fn default() -> Self {
-        ProjectType::Parallel
-    }
-}
 
 impl fmt::Display for ProjectType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

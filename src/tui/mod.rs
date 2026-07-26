@@ -45,6 +45,7 @@ pub(crate) fn next_hint(v: View) -> &'static str {
         View::Done => "可归档已完成事项",
         View::Projects => "把收件箱行动归入项目",
         View::Review => "清空各类积压",
+        View::Archived => "选中后按 u 恢复任务",
     }
 }
 

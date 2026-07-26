@@ -667,7 +667,6 @@ dependencies = [
  "crossterm 0.28.1",
  "dirs",
  "ratatui",
- "ratatui-crossterm",
  "rusqlite",
  "serde",
  "serde_json",

@@ -11,7 +11,7 @@ pub fn list_tags(conn: &Connection) -> Result<Vec<Tag>> {
         "SELECT id, name, category, is_system, color, icon, description, created_at \
          FROM tags ORDER BY category, name",
     )?;
-    let rows = stmt.query_map([], |r| row_to_tag(r))?;
+    let rows = stmt.query_map([], row_to_tag)?;
     let mut out = Vec::new();
     for t in rows {
         out.push(t?);
@@ -24,8 +24,8 @@ pub fn get_tag_by_name(conn: &Connection, name: &str) -> Result<Option<Tag>> {
         "SELECT id, name, category, is_system, color, icon, description, created_at \
          FROM tags WHERE name = ?1",
     )?;
-    let mut rows = stmt.query_map([name], |r| row_to_tag(r))?;
-    Ok(rows.next().transpose()?.map(|t| t))
+    let mut rows = stmt.query_map([name], row_to_tag)?;
+    Ok(rows.next().transpose()?)
 }
 
 /// Return the tag id for `name`, creating a custom tag if it doesn't exist.
@@ -110,7 +110,7 @@ pub fn get_task_tags(conn: &Connection, task_id: &str) -> Result<Vec<Tag>> {
          FROM tags t JOIN task_tags tt ON tt.tag_id = t.id WHERE tt.task_id = ?1 \
          ORDER BY t.category, t.name",
     )?;
-    let rows = stmt.query_map([task_id], |r| row_to_tag(r))?;
+    let rows = stmt.query_map([task_id], row_to_tag)?;
     let mut out = Vec::new();
     for t in rows {
         out.push(t?);

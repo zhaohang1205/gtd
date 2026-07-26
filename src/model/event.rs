@@ -21,5 +21,10 @@ pub const EV_DUE: &str = "due";
 
 pub const EV_COMPLETED: &str = "completed";
 pub const EV_ARCHIVED: &str = "archived";
+pub const EV_RESTORED: &str = "restored"; // archived task brought back (soft-delete undone)
 pub const EV_TAG_ADDED: &str = "tag_added";
 pub const EV_TAG_REMOVED: &str = "tag_removed";
+
+// Events not tied to a status transition:
+pub const EV_HABIT_COMPLETED: &str = "habit_completed"; // a recurring task's occurrence done; rescheduled
+pub const EV_POMODORO: &str = "pomodoro"; // a Pomodoro work session completed

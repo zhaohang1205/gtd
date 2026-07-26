@@ -51,6 +51,8 @@ pub enum Command {
     Done { id: String },
     /// Archive (soft delete)
     Archive { id: String },
+    /// Restore a previously archived (soft-deleted) task
+    Restore { id: String },
     /// Add a tag to a task (preset or custom)
     Tag { id: String, name: String },
     /// Remove a tag from a task

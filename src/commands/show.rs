@@ -31,6 +31,14 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
     println!("  title     : {}", task.title);
     println!("  kind      : {}", task.kind);
     println!("  status    : {}", task.status);
+    println!(
+        "  notes     : {}",
+        if task.notes.trim().is_empty() {
+            "-".to_string()
+        } else {
+            task.notes.clone()
+        }
+    );
     if let Some(p) = &task.parent_id {
         println!("  project   : {}", p);
     }

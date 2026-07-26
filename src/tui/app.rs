@@ -16,7 +16,7 @@ use super::calendar;
 
 pub(crate) fn visual_len(s: &str) -> usize {
     s.chars().map(|c| {
-        if c.is_ascii() || (c >= '\u{E000}' && c <= '\u{F8FF}') {
+        if c.is_ascii() || ('\u{E000}'..='\u{F8FF}').contains(&c) {
             1
         } else {
             2
@@ -47,6 +47,7 @@ pub(crate) enum View {
     Done,
     Projects,
     Review,
+    Archived,
 }
 
 impl View {
@@ -61,6 +62,7 @@ impl View {
             View::Done => "Done",
             View::Projects => "Projects",
             View::Review => "Review",
+            View::Archived => "Archived",
         }
     }
 
@@ -74,7 +76,7 @@ impl View {
             View::Someday => Some("someday"),
             View::Reference => Some("reference"),
             View::Done => Some("done"),
-            View::Projects | View::Review => None,
+            View::Projects | View::Review | View::Archived => None,
         }
     }
 
@@ -88,6 +90,7 @@ impl View {
             '5' => Some(View::Someday),
             '6' => Some(View::Reference),
             '7' => Some(View::Done),
+            '8' => Some(View::Archived),
             _ => None,
         }
     }
@@ -111,6 +114,16 @@ pub(crate) enum Mode {
     ChecklistAdding,
     Visual,
     FilteringTag,
+    /// 归档前确认：收集待归档的 id，等待 y/Enter 确认或 n/Esc 取消。
+    ConfirmArchive,
+    /// 编辑截止时间 (due)
+    EditingDue,
+    /// 编辑循环规则 (rrule)
+    EditingRrule,
+    /// 编辑委派对象 (delegated_to)
+    EditingDelegated,
+    /// 编辑项目类型 (project_type, 仅项目)
+    EditingProjectType,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -155,6 +168,7 @@ pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
     pub(crate) is_reviewing: bool,
     pub(crate) review_step: u8,
     pub(crate) needs_clear: bool,
+    pub(crate) pending_archive_ids: Vec<String>,
 }
 
 impl<'a> App<'a> {
@@ -181,6 +195,7 @@ impl<'a> App<'a> {
             is_reviewing: false,
             review_step: 0,
             needs_clear: false,
+            pending_archive_ids: Vec::new(),
         };
         app.refresh()?;
         app.load_detail();
@@ -216,18 +231,21 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn context_count(&self, v: View) -> usize {
-        match v.status() {
-            Some(s) => tasks::count(
-                self.conn,
-                &ListFilter {
-                    status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
-                    project: None,
-                    tags: vec![],
-                    query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
-                },
-            )
-            .unwrap_or(0),
-            None => 0,
+        match v {
+            View::Archived => tasks::list_archived(self.conn).map(|t| t.len()).unwrap_or(0),
+            _ => match v.status() {
+                Some(s) => tasks::count(
+                    self.conn,
+                    &ListFilter {
+                        status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
+                        project: None,
+                        tags: vec![],
+                        query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                    },
+                )
+                .unwrap_or(0),
+                None => 0,
+            },
         }
     }
 
@@ -261,6 +279,11 @@ impl<'a> App<'a> {
                     for a in actions {
                         self.items.push(row_from(&a, 1, self.conn)?);
                     }
+                }
+            }
+            View::Archived => {
+                for t in tasks::list_archived(self.conn)? {
+                    self.items.push(row_from(&t, 0, self.conn)?);
                 }
             }
             _ => {
@@ -350,6 +373,7 @@ impl<'a> App<'a> {
             View::Done,
             View::Projects,
             View::Review,
+            View::Archived,
         ];
         let idx = views.iter().position(|v| *v == self.view).unwrap_or(0) as isize;
         let mut next_idx = idx + delta;
@@ -431,10 +455,8 @@ impl<'a> App<'a> {
             let mut count = 0;
             for id in &ids {
                 if let Ok(task) = tasks::get(self.conn, id) {
-                    if task.status != to {
-                        if let Ok(_) = tasks::transition(self.conn, id, to) {
-                            count += 1;
-                        }
+                    if task.status != to && tasks::transition(self.conn, id, to).is_ok() {
+                        count += 1;
                     }
                 }
             }

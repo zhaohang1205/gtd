@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use std::process::Command as StdCommand;
 use std::thread;
 use std::time::Duration;
-use crate::model::pomodoro::Phase;
+use crate::model::{event, pomodoro::Phase};
 use crate::repo::{pomodoro, tasks};
 use crate::time;
 
@@ -100,7 +100,7 @@ pub fn daemon() -> Result<()> {
                         let _ = crate::repo::log_event(
                             &conn,
                             tid,
-                            "pomodoro",
+                            event::EV_POMODORO,
                             None,
                             None,
                             Some(&duration.to_string()),
@@ -108,7 +108,7 @@ pub fn daemon() -> Result<()> {
                     }
                     state.cycle += 1;
                     state.total_count += 1;
-                    if state.cycle % 4 == 0 {
+                    if state.cycle.is_multiple_of(4) {
                         state.phase = Phase::LongBreak;
                         state.end_ts = Some(now + 15 * 60 * 1000);
                         notify("Pomodoro Work Complete", "Time for a long break! (15m)");

@@ -44,7 +44,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Task> {
                 delegated_to,project_type,checklist \
          FROM tasks WHERE id = ?1",
     )?;
-    let mut rows = stmt.query_map([id], |r| row_to_task(r))?;
+    let mut rows = stmt.query_map([id], row_to_task)?;
     rows.next()
         .transpose()?
         .ok_or_else(|| Error::TaskNotFound(id.to_string()).into())
@@ -173,13 +173,13 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
 
     let tx = conn.unchecked_transaction()?;
 
-    if to_status == task::Status::Done && t.rrule.is_some() {
-        if let Some(start) = t.scheduled_start_at {
-            if let Ok(occ) = time::rrule_occurrences(t.rrule.as_ref().unwrap(), start, 366) {
+    if to_status == task::Status::Done {
+        if let (Some(rrule), Some(start)) = (&t.rrule, t.scheduled_start_at) {
+            if let Ok(occ) = time::rrule_occurrences(rrule, start, 366) {
                 if let Some(next) = occ.into_iter().find(|m| *m > start) {
                     let duration = t.scheduled_end_at.unwrap_or(start) - start;
                     
-                    log_event(&tx, id, "habit_completed", Some(&from.to_string()), Some(&task::Status::Done.to_string()), None)?;
+                    log_event(&tx, id, event::EV_HABIT_COMPLETED, Some(&from.to_string()), Some(&task::Status::Done.to_string()), None)?;
 
                     t.scheduled_start_at = Some(next);
                     t.scheduled_end_at = Some(next + duration);
@@ -235,9 +235,9 @@ pub fn assign_project(conn: &Connection, id: &str, project_id: &str) -> Result<T
 
 /// Set a soft deadline (`due_at`) without changing the task status. Used by the
 /// inbox→next planning hook so a next action keeps its status while gaining a due.
-pub fn set_due(conn: &Connection, id: &str, due_ms: i64) -> Result<Task> {
+pub fn set_due(conn: &Connection, id: &str, due_ms: Option<i64>) -> Result<Task> {
     let mut t = get(conn, id)?;
-    t.due_at = Some(due_ms);
+    t.due_at = due_ms;
     t.updated_at = time::now_ms();
     let tx = conn.unchecked_transaction()?;
     tx.execute(
@@ -247,6 +247,67 @@ pub fn set_due(conn: &Connection, id: &str, due_ms: i64) -> Result<Task> {
     log_event(&tx, id, event::EV_DUE, None, None, None)?;
     tx.commit()?;
     get(conn, id)
+}
+
+/// Replace a task's recurrence rule, keeping its scheduled window. Used by the
+/// TUI "edit rrule" action. Logs a `scheduled` event (rule change).
+pub fn set_rrule(conn: &Connection, id: &str, rrule: Option<String>) -> Result<Task> {
+    let mut t = get(conn, id)?;
+    let from = t.status;
+    t.rrule = rrule.clone();
+    t.updated_at = time::now_ms();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE tasks SET rrule=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![t.rrule, t.updated_at, id],
+    )?;
+    let meta = t
+        .rrule
+        .as_deref()
+        .map(|r| format!("{{\"rrule\":\"{}\"}}", r));
+    let to_s = t.status.to_string();
+    log_event(
+        &tx,
+        id,
+        event::EV_SCHEDULED,
+        Some(&from.to_string()),
+        Some(&to_s),
+        meta.as_deref(),
+    )?;
+    tx.commit()?;
+    Ok(t)
+}
+
+/// Set/clear the delegated-to field (the "waiting for" person/thing).
+pub fn set_delegated(conn: &Connection, id: &str, who: Option<String>) -> Result<Task> {
+    let mut t = get(conn, id)?;
+    t.delegated_to = who;
+    t.updated_at = time::now_ms();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE tasks SET delegated_to=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![t.delegated_to, t.updated_at, id],
+    )?;
+    tx.commit()?;
+    Ok(t)
+}
+
+/// Set a project's type (Parallel / Sequential).
+pub fn set_project_type(
+    conn: &Connection,
+    id: &str,
+    pt: task::ProjectType,
+) -> Result<Task> {
+    let mut t = get(conn, id)?;
+    t.project_type = pt;
+    t.updated_at = time::now_ms();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE tasks SET project_type=?1, updated_at=?2 WHERE id=?3",
+        rusqlite::params![t.project_type.to_string(), t.updated_at, id],
+    )?;
+    tx.commit()?;
+    Ok(t)
 }
 
 /// Schedule a task: set planned start/end + optional recurrence, move to
@@ -309,6 +370,37 @@ pub fn archive(conn: &Connection, id: &str) -> Result<Task> {
     get(conn, id)
 }
 
+/// Undo a soft-delete: clear `archived_at` and record a `restored` event.
+pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
+    let _ = get(conn, id)?;
+    let now = time::now_ms();
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "UPDATE tasks SET archived_at=NULL, updated_at=?1 WHERE id=?2",
+        rusqlite::params![now, id],
+    )?;
+    log_event(&tx, id, event::EV_RESTORED, None, None, None)?;
+    tx.commit()?;
+    get(conn, id)
+}
+
+/// List only archived (soft-deleted) tasks, for the restore UI.
+pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
+    let mut stmt = conn.prepare(
+        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
+                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
+                delegated_to,project_type,checklist \
+         FROM tasks WHERE archived_at IS NOT NULL \
+         ORDER BY archived_at DESC",
+    )?;
+    let rows = stmt.query_map([], row_to_task)?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 pub struct ListFilter {
     pub status: Option<task::Status>,
     pub project: Option<String>, // project id or name
@@ -351,7 +443,7 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
 
     let mut stmt = conn.prepare(&sql)?;
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), |r| row_to_task(r))?;
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_task)?;
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);

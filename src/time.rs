@@ -178,9 +178,9 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
                 out.push(ms);
                 occurrences_found += 1;
             }
-            current_day = current_day + chrono::Duration::days(1);
+            current_day += chrono::Duration::days(1);
             if current_day.weekday() == chrono::Weekday::Mon && interval > 1 {
-                current_day = current_day + chrono::Duration::weeks(interval - 1);
+                current_day += chrono::Duration::weeks(interval - 1);
             }
         }
     } else {
