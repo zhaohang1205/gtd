@@ -361,7 +361,7 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(Block::default().style(Style::default().bg(bg_color)), area);
 
         // ── 居中布局 ──
-        let total_height = 7 + 2 + 6 + 3;
+        let total_height = 7 + 2 + 3 + 3; // 7 (time) + 2 (title) + 3 (sloth bar) + 3 (stats)
         let top_padding = area.height.saturating_sub(total_height) / 2;
 
         let rows = Layout::default()
@@ -370,7 +370,7 @@ impl<'a> AppRender for App<'a> {
                 Constraint::Length(top_padding.max(1)), // Top space
                 Constraint::Length(7),                  // Big Time
                 Constraint::Length(2),                  // Task Title
-                Constraint::Length(6),                  // Plant Animation
+                Constraint::Length(3),                  // Sloth Progress
                 Constraint::Min(3),                     // Stats & Hints
             ])
             .split(area);
@@ -399,13 +399,23 @@ impl<'a> AppRender for App<'a> {
             rows[2],
         );
 
-        // ── 3. 种树动画 (Forest) ──
-        let plant_lines = build_plant_ascii(elapsed_fraction, secs as u64, ring_color);
+        // ── 3. 树懒爬行进度条 ──
+        let gauge_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(15),
+                Constraint::Percentage(70),
+                Constraint::Percentage(15),
+            ])
+            .split(rows[3]);
+
+        let width = gauge_layout[1].width.saturating_sub(6) as usize; // reserve space for " 100%"
+        let sloth_lines = build_sloth_progress(elapsed_fraction, secs as u64, width, ring_color);
         f.render_widget(
-            Paragraph::new(plant_lines)
-                .alignment(Alignment::Center)
+            Paragraph::new(sloth_lines)
+                .alignment(Alignment::Left)
                 .style(Style::default().bg(bg_color)),
-            rows[3],
+            gauge_layout[1],
         );
 
         // ── 4. 克制的统计信息 & 快捷键 ──
@@ -1263,70 +1273,38 @@ fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'st
         .collect()
 }
 
-// ── 种树模式 (Forest) 辅助函数 ──
-fn build_plant_ascii(fraction: f64, secs: u64, color: Color) -> Vec<Line<'static>> {
-    let phase = (fraction * 4.99).floor() as usize; 
-    let sway = secs % 2 == 0;
+// ── 树懒进度条辅助函数 ──
+fn build_sloth_progress(fraction: f64, secs: u64, width: usize, fg_color: Color) -> Vec<Line<'static>> {
+    let pos = (fraction * (width as f64)).floor() as usize;
+    let pos = pos.min(width.saturating_sub(2));
     
-    let (l_leaf, r_leaf) = if sway {
-        ("🌿", "🍃")
-    } else {
-        ("🍃", "🌿")
-    };
+    let mut sloth_line = String::new();
+    for _ in 0..pos {
+        sloth_line.push(' ');
+    }
     
-    let bug = match secs % 4 {
-        0 => "   🦋          ",
-        1 => "      🦋       ",
-        2 => "         🦋    ",
-        3 => "      🦋       ",
-        _ => "               ",
+    // 树懒随秒数呼吸/打盹的动画
+    let anim = match secs % 4 {
+        0 => "🦥 ",
+        1 => "🦥z",
+        2 => "🦥Z",
+        3 => "🦥z",
+        _ => "🦥 ",
     };
+    sloth_line.push_str(anim);
+    
+    let pole_str = "━".repeat(width);
+    let percent = format!(" {:>3.0}%", fraction * 100.0);
+    
+    // 粗木杆颜色
+    let pole_brown = Color::Rgb(139, 69, 19);
 
-    let lines = match phase {
-        0 => vec![
-            "               ".to_string(),
-            "               ".to_string(),
-            "               ".to_string(),
-            "               ".to_string(),
-            "      🌱       ".to_string(),
-            "   ═════════   ".to_string(),
-        ],
-        1 => vec![
-            "               ".to_string(),
-            "               ".to_string(),
-            "               ".to_string(),
-            "      \\|/      ".to_string(),
-            "       |       ".to_string(),
-            "   ═════════   ".to_string(),
-        ],
-        2 => vec![
-            "               ".to_string(),
-            bug.to_string(),
-            format!("    {} | {}    ", l_leaf, r_leaf),
-            "     --|--     ".to_string(),
-            "      /|\\      ".to_string(),
-            "   ═════════   ".to_string(),
-        ],
-        3 => vec![
-            bug.to_string(),
-            "      _|_      ".to_string(),
-            format!("    {} | {}    ", l_leaf, r_leaf),
-            "    ---|---    ".to_string(),
-            "      /|\\      ".to_string(),
-            "   ═════════   ".to_string(),
-        ],
-        4 => vec![
-            "      🍅       ".to_string(),
-            format!("    {} | {}    ", l_leaf, r_leaf),
-            "   🍅--|--🍅   ".to_string(),
-            "      /|\\      ".to_string(),
-            "      /|\\      ".to_string(),
-            "   ═════════   ".to_string(),
-        ],
-        _ => vec![],
-    };
-
-    lines.into_iter().map(|s| {
-        Line::from(Span::styled(s, Style::default().fg(color).add_modifier(Modifier::BOLD)))
-    }).collect()
+    vec![
+        Line::from(Span::styled(sloth_line, Style::default().fg(fg_color))),
+        Line::from(vec![
+            Span::styled(pole_str, Style::default().fg(pole_brown).add_modifier(Modifier::BOLD)),
+            Span::styled(percent, Style::default().fg(fg_color).add_modifier(Modifier::BOLD)),
+        ]),
+    ]
 }
+
