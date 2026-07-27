@@ -376,7 +376,8 @@ impl<'a> AppRender for App<'a> {
             .split(area);
 
         // ── 1. 大数字倒计时 ──
-        let big_lines = build_big_time(&time_str, ring_color, bg_color);
+        let blink = secs % 2 == 0;
+        let big_lines = build_big_time(&time_str, ring_color, bg_color, blink);
         f.render_widget(
             Paragraph::new(big_lines)
                 .alignment(Alignment::Center)
@@ -408,11 +409,16 @@ impl<'a> AppRender for App<'a> {
             ])
             .split(rows[3]);
 
+        // 小小的趣味动画，每秒变化，让读条与秒钟的跳动感连接起来
+        let anim_frames = ["( ˘▽˘)っ🍅", "( ˘▽˘)っ 🍅", "( ˘▽˘)っ  🍅", "( ˘▽˘)っ   🍅"];
+        let current_anim = anim_frames[secs as usize % anim_frames.len()];
+
         let progress = ratatui::widgets::Gauge::default()
             .gauge_style(Style::default().fg(ring_color).bg(dim_color))
+            .use_unicode(true)
             .ratio(elapsed_fraction)
             .label(Span::styled(
-                format!("{:.0}%", elapsed_fraction * 100.0),
+                format!("{} {:.0}%", current_anim, elapsed_fraction * 100.0),
                 Style::default().fg(self.theme.bg).add_modifier(Modifier::BOLD),
             ));
         f.render_widget(progress, gauge_layout[1]);
@@ -1231,7 +1237,7 @@ impl<'a> AppRender for App<'a> {
 
 // ── 大数字字体辅助（5 行 × 4 列，纯 █ 字符）──
 
-fn big_digit_rows(c: char) -> [&'static str; 5] {
+fn big_digit_rows(c: char, blink: bool) -> [&'static str; 5] {
     match c {
         '0' => [" ██ ", "█  █", "█  █", "█  █", " ██ "],
         '1' => [" ▐█ ", " ██ ", "  █ ", "  █ ", " ███"],
@@ -1243,17 +1249,17 @@ fn big_digit_rows(c: char) -> [&'static str; 5] {
         '7' => ["████", "   █", "  █ ", " █  ", " █  "],
         '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
         '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
-        ':' => ["    ", " ██ ", "    ", " ██ ", "    "],
+        ':' => if blink { ["    ", " ██ ", "    ", " ██ ", "    "] } else { ["    ", "    ", "    ", "    ", "    "] },
         _ => ["    ", "    ", "    ", "    ", "    "],
     }
 }
 
 /// 将形如 "23:45" 的字符串渲染为 5 行大数字（每行是一个 Span）。
-fn build_big_time(s: &str, color: Color, bg: Color) -> Vec<Line<'static>> {
+fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'static>> {
     let chars: Vec<char> = s.chars().collect();
     let mut rows: [String; 5] = Default::default();
     for &c in &chars {
-        let digit = big_digit_rows(c);
+        let digit = big_digit_rows(c, blink);
         for (i, part) in digit.iter().enumerate() {
             rows[i].push_str(part);
             rows[i].push(' '); // 字符间距
