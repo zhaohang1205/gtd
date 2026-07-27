@@ -336,10 +336,11 @@ impl<'a> AppRender for App<'a> {
         let time_str = format!("{:02}:{:02}", mins, secs);
 
         // ── 阶段配色 ──
-        let (phase_icon, ring_color, _dim_color, bg_color) = match pomo.phase {
+        // ── 阶段配色 ──
+        let (phase_icon, ring_color, dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
                 "🍅 专注",
-                Color::Rgb(230, 60, 60), // Keep the red tomato vibe
+                Color::Rgb(230, 60, 60), 
                 Color::Rgb(70, 25, 25),
                 self.theme.bg,
             ),
@@ -361,32 +362,21 @@ impl<'a> AppRender for App<'a> {
         // ── 全屏背景 ──
         f.render_widget(Block::default().style(Style::default().bg(bg_color)), area);
 
-        // ── 居中布局 ──
-        let total_height = 7 + 2 + 3 + 3; // 7 (time) + 2 (title) + 3 (sloth bar) + 3 (stats)
-        let top_padding = area.height.saturating_sub(total_height) / 2;
-
+        // ── 布局（垂直分区）──
         let rows = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(top_padding.max(1)), // Top space
-                Constraint::Length(7),                  // Big Time
-                Constraint::Length(2),                  // Task Title
-                Constraint::Length(3),                  // Sloth Progress
-                Constraint::Min(3),                     // Stats & Hints
+                Constraint::Length(2), // 顶部留白
+                Constraint::Length(2), // 任务标题
+                Constraint::Min(10),   // Canvas 番茄进度环
+                Constraint::Length(7), // 大数字倒计时
+                Constraint::Length(1), // 留白
+                Constraint::Length(1), // 统计栏
+                Constraint::Length(1), // 操作提示
             ])
             .split(area);
 
-        // ── 1. 大数字倒计时 ──
-        let blink = secs % 2 == 0;
-        let big_lines = build_big_time(&time_str, ring_color, bg_color, blink);
-        f.render_widget(
-            Paragraph::new(big_lines)
-                .alignment(Alignment::Center)
-                .style(Style::default().bg(bg_color)),
-            rows[1],
-        );
-
-        // ── 2. 当前任务与状态 ──
+        // ── 1. 当前任务与状态 ──
         let task_title = pomo.task_title.as_deref().unwrap_or("无标题");
         let title_line = Line::from(vec![
             Span::styled(format!(" {} ", phase_icon), Style::default().fg(ring_color).add_modifier(Modifier::BOLD)),
@@ -397,77 +387,95 @@ impl<'a> AppRender for App<'a> {
             Paragraph::new(title_line)
                 .alignment(Alignment::Center)
                 .style(Style::default().bg(bg_color)),
-            rows[2],
+            rows[1],
         );
 
-        // ── 3. 点阵频谱律动 (Braille Wave) ──
-        let gauge_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(15),
-                Constraint::Percentage(70),
-                Constraint::Percentage(15),
-            ])
-            .split(rows[3]);
+        // ── 2. Canvas 圆形进度环 (点阵图案) ──
+        let canvas_area = rows[2];
+        let cw = canvas_area.width as f64;
+        let ch = canvas_area.height as f64;
+        let y_range = (100.0 * ch * 2.0 / cw).max(10.0);
+        let cx_c = 50.0_f64;
+        let cy_c = y_range / 2.0;
+        let max_r = cy_c.min(50.0) * 0.88;
+        let outer_r = max_r;
+        let inner_r = max_r * 0.68;
 
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64;
-        let t = now / 250.0; // 动画速度
+        let ef = elapsed_fraction;
+        let rc = ring_color;
+        let dc = dim_color;
+        let bgc = bg_color;
 
-        let wave_canvas = Canvas::default()
+        let canvas = Canvas::default()
             .marker(ratatui::symbols::Marker::Braille)
             .x_bounds([0.0, 100.0])
-            .y_bounds([0.0, 10.0])
+            .y_bounds([0.0, y_range])
+            .background_color(bgc)
             .paint(move |ctx| {
-                let mut points = Vec::new();
-                let mut dim_points = Vec::new();
-                
-                let max_x = 100;
-                for x in 0..max_x {
-                    let is_active = (x as f64) <= elapsed_fraction * 100.0;
-                    
-                    let height = if is_active {
-                        let wave1 = ((x as f64 / 8.0) - t).sin();
-                        let wave2 = ((x as f64 / 15.0) + t * 1.3).cos();
-                        let wave3 = ((x as f64 / 3.0) - t * 2.0).sin() * 0.5;
-                        let normalized = (wave1 + wave2 + wave3 + 2.5) / 5.0;
-                        (normalized * 10.0).clamp(1.0, 10.0)
-                    } else {
-                        1.0 
-                    };
-                    
-                    for y in 0..=10 {
-                        if (y as f64) <= height {
-                            if is_active {
-                                points.push((x as f64, y as f64));
-                            } else {
-                                dim_points.push((x as f64, y as f64));
-                            }
+                let steps = 1440_usize;
+                let ring_steps = ((outer_r - inner_r) * 3.0) as usize + 1;
+
+                let mut rem_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+                let mut ela_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+
+                for i in 0..steps {
+                    let angle_deg = i as f64 * 360.0 / steps as f64;
+                    let angle_rad = (90.0_f64 - angle_deg).to_radians();
+                    let frac = angle_deg / 360.0;
+
+                    for ri in 0..=ring_steps {
+                        let r = inner_r + ri as f64 * (outer_r - inner_r) / ring_steps as f64;
+                        let x = cx_c + r * angle_rad.cos();
+                        let y = cy_c + r * angle_rad.sin();
+                        if !(0.5..=99.5).contains(&x) || y < 0.5 || y > y_range - 0.5 {
+                            continue;
+                        }
+                        if frac >= ef {
+                            rem_pts.push((x, y));
+                        } else {
+                            ela_pts.push((x, y));
                         }
                     }
                 }
-                
                 ctx.draw(&Points {
-                    coords: &dim_points,
-                    color: Color::DarkGray,
+                    coords: &ela_pts,
+                    color: dc,
                 });
-                
                 ctx.draw(&Points {
-                    coords: &points,
-                    color: ring_color,
+                    coords: &rem_pts,
+                    color: rc,
+                });
+
+                // 外围刻度点
+                let mut tick_pts = vec![];
+                for t in 0..12 {
+                    let deg = t as f64 * 30.0;
+                    let rad = (90.0_f64 - deg).to_radians();
+                    for ri in 0..=3 {
+                        let r = outer_r + 2.0 + ri as f64 * 0.8;
+                        let x = cx_c + r * rad.cos();
+                        let y = cy_c + r * rad.sin();
+                        tick_pts.push((x, y));
+                    }
+                }
+                ctx.draw(&Points {
+                    coords: &tick_pts,
+                    color: Color::Rgb(85, 85, 85),
                 });
             });
+        f.render_widget(canvas, canvas_area);
 
-        f.render_widget(wave_canvas, gauge_layout[1]);
+        // ── 3. 大数字倒计时 (秒针呼吸联动) ──
+        let blink = secs % 2 == 0;
+        let big_lines = build_big_time(&time_str, ring_color, bg_color, blink);
+        f.render_widget(
+            Paragraph::new(big_lines)
+                .alignment(Alignment::Center)
+                .style(Style::default().bg(bg_color)),
+            rows[3],
+        );
 
         // ── 4. 克制的统计信息 & 快捷键 ──
-        let stats_hint_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // empty space
-                Constraint::Length(1), // stats and hints
-            ])
-            .split(rows[4]);
-
         let hints = if matches!(pomo.phase, Phase::ShortBreak | Phase::LongBreak) {
             "󰄾 [Space/P] 下一轮  |  [S] 结束专注"
         } else {
@@ -478,15 +486,20 @@ impl<'a> AppRender for App<'a> {
             Span::styled(format!(" 🏆 今日完成: {} ", pomo.today_count), Style::default().fg(self.theme.text_dim)),
             Span::styled(" • ", Style::default().fg(self.theme.text_dim)),
             Span::styled(format!(" 🔥 连击: {} ", pomo.streak), Style::default().fg(self.theme.text_dim)),
-            Span::styled("      |      ", Style::default().fg(self.theme.border_inactive)),
-            Span::styled(hints, Style::default().fg(self.theme.text_dim)),
         ]);
         
         f.render_widget(
             Paragraph::new(stats_line)
                 .alignment(Alignment::Center)
                 .style(Style::default().bg(bg_color)),
-            stats_hint_layout[1],
+            rows[5],
+        );
+
+        f.render_widget(
+            Paragraph::new(hints)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(self.theme.border_inactive).bg(bg_color)),
+            rows[6],
         );
     }
 
