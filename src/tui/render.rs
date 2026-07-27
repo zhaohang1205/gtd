@@ -316,6 +316,48 @@ impl<'a> AppRender for App<'a> {
             };
             self.render_syntax_drawer(f, syntax_area);
         }
+
+        if let Some(ref popup) = self.popup {
+            match popup {
+                crate::tui::app::Popup::TodayTasks(tasks) => {
+                    let mut lines = vec![Line::from("今日有以下任务需要完成:")];
+                    lines.push(Line::from(""));
+                    for t in tasks.iter().take(10) {
+                        lines.push(Line::from(format!(" - {}", t)));
+                    }
+                    if tasks.len() > 10 {
+                        lines.push(Line::from(format!("   ... 等 {} 个任务", tasks.len())));
+                    }
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(" [按 Enter 或 Esc 键关闭] ", Style::default().fg(self.theme.text_dim))));
+                    
+                    let area = self.centered_rect(50, 15, size);
+                    f.render_widget(ratatui::widgets::Clear, area);
+                    let block = Block::default()
+                        .title(" 📅 今日任务概览 ")
+                        .borders(Borders::ALL)
+                        .border_set(border::ROUNDED)
+                        .border_style(Style::default().fg(self.theme.accent));
+                    f.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+                }
+                crate::tui::app::Popup::TaskDueNow(_, title) => {
+                    let mut lines = vec![Line::from("有任务已到期，需要立即处理：")];
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(format!(" 「{}」 ", title), Style::default().fg(self.theme.text_urgent).add_modifier(Modifier::BOLD))));
+                    lines.push(Line::from(""));
+                    lines.push(Line::from(Span::styled(" [Enter] 一键进入番茄钟  |  [Esc] 忽略 ", Style::default().fg(self.theme.text_dim))));
+                    
+                    let area = self.centered_rect(50, 10, size);
+                    f.render_widget(ratatui::widgets::Clear, area);
+                    let block = Block::default()
+                        .title(" ⏰ 任务提醒! ")
+                        .borders(Borders::ALL)
+                        .border_set(border::ROUNDED)
+                        .border_style(Style::default().fg(self.theme.text_urgent));
+                    f.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+                }
+            }
+        }
     }
 
     fn render_focus_mode(&mut self, f: &mut Frame, area: Rect) {

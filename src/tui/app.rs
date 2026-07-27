@@ -144,6 +144,14 @@ pub(crate) enum Pane {
     Right,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum Popup {
+    /// Show today's tasks summary on startup
+    TodayTasks(Vec<String>),
+    /// Prompt to enter Pomodoro mode for a scheduled task
+    TaskDueNow(String, String), // task_id, task_title
+}
+
 #[derive(Clone)]
 pub(crate) struct Row {
     pub(crate) id: String,
@@ -191,6 +199,9 @@ pub(crate) struct App<'a> {
     pub(crate) pending_archive_ids: Vec<String>,
     pub(crate) hide_pomo_banner: bool,
     pub(crate) theme: crate::tui::theme::Theme,
+    pub(crate) popup: Option<Popup>,
+    pub(crate) last_tick_ms: i64,
+    pub(crate) notified_events: std::collections::HashSet<String>,
 }
 
 impl<'a> App<'a> {
@@ -222,11 +233,78 @@ impl<'a> App<'a> {
             pending_archive_ids: Vec::new(),
             hide_pomo_banner: false,
             theme: crate::tui::theme::Theme::default(),
+            popup: None,
+            last_tick_ms: 0,
+            notified_events: std::collections::HashSet::new(),
         };
         app.refresh()?;
+        
+        // --- Startup Today Tasks Popup ---
+        let all_tasks = tasks::list(conn, &ListFilter { status: None, project: None, tags: vec![], query: None }).unwrap_or_default();
+        
+        let today_start = chrono::Local::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
+        let today_end = chrono::Local::now().date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp();
+        
+        let mut todays = Vec::new();
+        for t in &all_tasks {
+            if let Some(due) = t.due_at {
+                if due >= today_start && due <= today_end {
+                    todays.push(t.title.clone());
+                }
+            }
+        }
+        
+        if !todays.is_empty() {
+            app.popup = Some(Popup::TodayTasks(todays));
+        }
+
         app.load_detail();
         app.switch_to_english_ime();
         Ok(app)
+    }
+
+    pub(crate) fn check_notifications(&mut self) {
+        let now = chrono::Local::now().timestamp();
+        if now - self.last_tick_ms < 10 {
+            return;
+        }
+        self.last_tick_ms = now;
+
+        let all_tasks = tasks::list(self.conn, &ListFilter { status: None, project: None, tags: vec![], query: None }).unwrap_or_default();
+        for t in all_tasks {
+            if let Some(due) = t.due_at {
+                let diff = due - now;
+                
+                // 1 hour
+                if diff > 0 && diff <= 3600 && diff > 3540 { 
+                    let key = format!("{}-1h", t.id);
+                    if !self.notified_events.contains(&key) {
+                        self.notified_events.insert(key);
+                        let _ = notify_rust::Notification::new().summary("任务即将在1小时后开始").body(&t.title).appname("GTD").show();
+                    }
+                }
+                
+                // 10 mins
+                if diff > 0 && diff <= 600 && diff > 540 { 
+                    let key = format!("{}-10m", t.id);
+                    if !self.notified_events.contains(&key) {
+                        self.notified_events.insert(key);
+                        let _ = notify_rust::Notification::new().summary("任务即将在10分钟后开始").body(&t.title).appname("GTD").show();
+                    }
+                }
+                
+                // Due now
+                if diff <= 0 && diff > -60 {
+                    let key = format!("{}-now", t.id);
+                    if !self.notified_events.contains(&key) {
+                        self.notified_events.insert(key);
+                        let _ = notify_rust::Notification::new().summary("任务现在开始!").body(&t.title).appname("GTD").show();
+                        self.popup = Some(Popup::TaskDueNow(t.id.clone(), t.title.clone()));
+                        self.needs_clear = true; // force redraw to show popup
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn set_mode(&mut self, new_mode: Mode) {

@@ -24,6 +24,27 @@ impl<'a> AppHandlers for App<'a> {
             self.should_quit = true;
             return Ok(());
         }
+
+        if let Some(popup) = self.popup.take() {
+            match key.code {
+                KeyCode::Enter => {
+                    if let crate::tui::app::Popup::TaskDueNow(id, _) = popup {
+                        let _ = crate::commands::pomo::start(self.conn, &id);
+                        self.needs_clear = true;
+                    }
+                }
+                _ => {
+                    // Default to close on any key
+                    if let crate::tui::app::Popup::TaskDueNow(id, title) = popup {
+                        if key.code != KeyCode::Esc {
+                            // If they typed something else, maybe restore the popup? Let's just close on anything for now.
+                        }
+                    }
+                }
+            }
+            return Ok(());
+        }
+
         match self.mode {
             Mode::Normal | Mode::Visual => self.handle_normal(key),
             _ => self.handle_input(key),

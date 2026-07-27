@@ -133,6 +133,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
             terminal.clear()?;
             app.needs_clear = false;
         }
+        app.check_notifications();
         terminal.draw(|f| app.render(f))?;
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
