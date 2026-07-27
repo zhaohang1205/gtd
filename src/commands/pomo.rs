@@ -64,8 +64,9 @@ pub fn waybar() -> Result<()> {
         println!(
             "{}",
             serde_json::json!({
-                "text": "",
-                "class": "idle"
+                "text": "🍅",
+                "class": "idle",
+                "tooltip": "Pomodoro (Idle)"
             })
         );
         return Ok(());
