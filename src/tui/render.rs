@@ -11,6 +11,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{
+        canvas::{Canvas, Points},
         Block, Borders, List, Paragraph,
     },
     Frame,
@@ -399,7 +400,7 @@ impl<'a> AppRender for App<'a> {
             rows[2],
         );
 
-        // ── 3. 树懒爬行进度条 ──
+        // ── 3. 点阵频谱律动 (Braille Wave) ──
         let gauge_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
@@ -409,14 +410,54 @@ impl<'a> AppRender for App<'a> {
             ])
             .split(rows[3]);
 
-        let width = gauge_layout[1].width.saturating_sub(6) as usize; // reserve space for " 100%"
-        let sloth_lines = build_sloth_progress(elapsed_fraction, secs as u64, width, ring_color);
-        f.render_widget(
-            Paragraph::new(sloth_lines)
-                .alignment(Alignment::Left)
-                .style(Style::default().bg(bg_color)),
-            gauge_layout[1],
-        );
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as f64;
+        let t = now / 250.0; // 动画速度
+
+        let wave_canvas = Canvas::default()
+            .marker(ratatui::symbols::Marker::Braille)
+            .x_bounds([0.0, 100.0])
+            .y_bounds([0.0, 10.0])
+            .paint(move |ctx| {
+                let mut points = Vec::new();
+                let mut dim_points = Vec::new();
+                
+                let max_x = 100;
+                for x in 0..max_x {
+                    let is_active = (x as f64) <= elapsed_fraction * 100.0;
+                    
+                    let height = if is_active {
+                        let wave1 = ((x as f64 / 8.0) - t).sin();
+                        let wave2 = ((x as f64 / 15.0) + t * 1.3).cos();
+                        let wave3 = ((x as f64 / 3.0) - t * 2.0).sin() * 0.5;
+                        let normalized = (wave1 + wave2 + wave3 + 2.5) / 5.0;
+                        (normalized * 10.0).clamp(1.0, 10.0)
+                    } else {
+                        1.0 
+                    };
+                    
+                    for y in 0..=10 {
+                        if (y as f64) <= height {
+                            if is_active {
+                                points.push((x as f64, y as f64));
+                            } else {
+                                dim_points.push((x as f64, y as f64));
+                            }
+                        }
+                    }
+                }
+                
+                ctx.draw(&Points {
+                    coords: &dim_points,
+                    color: Color::DarkGray,
+                });
+                
+                ctx.draw(&Points {
+                    coords: &points,
+                    color: ring_color,
+                });
+            });
+
+        f.render_widget(wave_canvas, gauge_layout[1]);
 
         // ── 4. 克制的统计信息 & 快捷键 ──
         let stats_hint_layout = Layout::default()
@@ -1273,38 +1314,5 @@ fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'st
         .collect()
 }
 
-// ── 树懒进度条辅助函数 ──
-fn build_sloth_progress(fraction: f64, secs: u64, width: usize, fg_color: Color) -> Vec<Line<'static>> {
-    let pos = (fraction * (width as f64)).floor() as usize;
-    let pos = pos.min(width.saturating_sub(2));
-    
-    let mut sloth_line = String::new();
-    for _ in 0..pos {
-        sloth_line.push(' ');
-    }
-    
-    // 树懒随秒数呼吸/打盹的动画
-    let anim = match secs % 4 {
-        0 => "🦥 ",
-        1 => "🦥z",
-        2 => "🦥Z",
-        3 => "🦥z",
-        _ => "🦥 ",
-    };
-    sloth_line.push_str(anim);
-    
-    let pole_str = "━".repeat(width);
-    let percent = format!(" {:>3.0}%", fraction * 100.0);
-    
-    // 粗木杆颜色
-    let pole_brown = Color::Rgb(139, 69, 19);
 
-    vec![
-        Line::from(Span::styled(sloth_line, Style::default().fg(fg_color))),
-        Line::from(vec![
-            Span::styled(pole_str, Style::default().fg(pole_brown).add_modifier(Modifier::BOLD)),
-            Span::styled(percent, Style::default().fg(fg_color).add_modifier(Modifier::BOLD)),
-        ]),
-    ]
-}
 
