@@ -335,7 +335,7 @@ impl<'a> AppRender for App<'a> {
         let time_str = format!("{:02}:{:02}", mins, secs);
 
         // ── 阶段配色 ──
-        let (phase_icon, ring_color, dim_color, bg_color) = match pomo.phase {
+        let (phase_icon, ring_color, _dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
                 "🍅 专注",
                 Color::Rgb(230, 60, 60), // Keep the red tomato vibe
