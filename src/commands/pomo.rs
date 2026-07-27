@@ -80,7 +80,25 @@ pub fn waybar() -> Result<()> {
     }
     let m = diff / 60;
     let s = diff % 60;
-    let text = format!("🍅 {:02}:{:02}", m, s);
+    
+    let icon = match state.phase {
+        Phase::Work => "🍅",
+        Phase::ShortBreak | Phase::LongBreak => "☕",
+        Phase::Idle => "🍅",
+    };
+    
+    let title = state.task_title.as_deref().unwrap_or("");
+    let text = if title.is_empty() {
+        format!("{} {:02}:{:02}", icon, m, s)
+    } else {
+        let mut short_title = title.to_string();
+        if short_title.chars().count() > 15 {
+            let truncated: String = short_title.chars().take(14).collect();
+            short_title = format!("{}…", truncated);
+        }
+        format!("{} {} {:02}:{:02}", icon, short_title, m, s)
+    };
+
     let class = match state.phase {
         Phase::Work => "work",
         Phase::ShortBreak => "short_break",
@@ -89,7 +107,7 @@ pub fn waybar() -> Result<()> {
     };
     let tooltip = format!(
         "{} - {:?}",
-        state.task_title.as_deref().unwrap_or(""),
+        title,
         state.phase
     );
     println!(
