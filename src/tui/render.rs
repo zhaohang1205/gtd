@@ -1,18 +1,21 @@
-use super::app::{App, Mode, Pane, View, pad_right};
-use super::{status_cn, next_hint};
+use super::app::{pad_right, App, Mode, Pane, View};
+use super::ui;
+use super::ui::build_list_items;
+use super::{next_hint, status_cn};
+use crate::model::{event, task};
+use crate::repo::tasks::{self, ListFilter};
+use crate::time;
+use ratatui::symbols::border;
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, Paragraph, canvas::{Canvas, Points}},
+    widgets::{
+        canvas::{Canvas, Points},
+        Block, Borders, List, Paragraph,
+    },
     Frame,
 };
-use ratatui::symbols::border;
-use crate::model::{event, task};
-use crate::time;
-use crate::repo::tasks::{self, ListFilter};
-use super::ui::build_list_items;
-use super::ui;
 
 pub(crate) trait AppRender {
     fn render(&mut self, f: &mut Frame);
@@ -46,13 +49,25 @@ impl<'a> AppRender for App<'a> {
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Length(1), Constraint::Min(0)])
                 .split(size);
-            
-            let step_names = ["", "清空收件箱", "检视项目", "追踪等待事项", "重估将来/也许"];
+
+            let step_names = [
+                "",
+                "清空收件箱",
+                "检视项目",
+                "追踪等待事项",
+                "重估将来/也许",
+            ];
             let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
-            
+
             let banner = Paragraph::new(Line::from(Span::styled(
-                format!(" 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ", self.review_step, step_name),
-                Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+                format!(
+                    " 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ",
+                    self.review_step, step_name
+                ),
+                Style::default()
+                    .bg(Color::Cyan)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
             )));
             f.render_widget(banner, chunks[0]);
             main_area = chunks[1];
@@ -60,21 +75,40 @@ impl<'a> AppRender for App<'a> {
             let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
             let today_active = pomo.last_date.as_deref() == Some(today.as_str());
-            
+
             if today_active && pomo.today_count > 0 {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Length(1), Constraint::Min(0)])
                     .split(size);
 
-                let last_title = pomo.last_completed_task_title.as_deref().unwrap_or("上一任务");
+                let last_title = pomo
+                    .last_completed_task_title
+                    .as_deref()
+                    .unwrap_or("上一任务");
                 let banner = Paragraph::new(Line::from(vec![
-                    Span::styled(format!(" 🏆 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ", pomo.today_count, pomo.streak), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
-                    Span::styled(format!("休息已完成  |  再接再厉? 👉 [Space/P] 开启新一轮专注 [{}] ", last_title), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!(
+                            " 🏆 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
+                            pomo.today_count, pomo.streak
+                        ),
+                        Style::default()
+                            .fg(Color::Black)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        format!(
+                            "休息已完成  |  再接再厉? 👉 [Space/P] 开启新一轮专注 [{}] ",
+                            last_title
+                        ),
+                        Style::default()
+                            .fg(Color::Black)
+                            .add_modifier(Modifier::BOLD),
+                    ),
                 ]))
                 .alignment(ratatui::layout::Alignment::Center)
                 .style(Style::default().bg(Color::Green));
-                
+
                 f.render_widget(banner, chunks[0]);
                 main_area = chunks[1];
             }
@@ -126,13 +160,33 @@ impl<'a> AppRender for App<'a> {
         self.render_detail(f, body[2]);
 
         // 状态栏 (Statusline)
-        let mode_str = if self.mode == Mode::Normal { " NORMAL " } else { " INSERT " };
-        let mode_bg = if self.mode == Mode::Normal { Color::Cyan } else { Color::Yellow };
+        let mode_str = if self.mode == Mode::Normal {
+            " NORMAL "
+        } else {
+            " INSERT "
+        };
+        let mode_bg = if self.mode == Mode::Normal {
+            Color::Cyan
+        } else {
+            Color::Yellow
+        };
         let mode_fg = Color::Black;
 
         let status_left = Line::from(vec![
-            Span::styled(mode_str, Style::default().fg(mode_fg).bg(mode_bg).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" {} ", self.view.label()), Style::default().fg(Color::White).bg(Color::Indexed(238)).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                mode_str,
+                Style::default()
+                    .fg(mode_fg)
+                    .bg(mode_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {} ", self.view.label()),
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Indexed(238))
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         let status_msg = if self.status_message.is_empty() {
@@ -141,25 +195,51 @@ impl<'a> AppRender for App<'a> {
             format!(" {} ", self.status_message)
         };
         let status_right = Line::from(vec![
-            Span::styled(status_msg, Style::default().fg(Color::White).bg(Color::Indexed(238))),
-            Span::styled(" gtp ".to_string(), Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                status_msg,
+                Style::default().fg(Color::White).bg(Color::Indexed(238)),
+            ),
+            Span::styled(
+                " gtp ".to_string(),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
 
         let status_layout = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
             .split(chunks[1]);
-            
-        f.render_widget(Paragraph::new(status_left).style(Style::default().bg(Color::Indexed(238))), status_layout[0]);
-        f.render_widget(Paragraph::new(status_right).alignment(ratatui::layout::Alignment::Right).style(Style::default().bg(Color::Indexed(238))), status_layout[1]);
 
-        if self.mode != Mode::Normal && self.mode != Mode::SchedulingCalendar && self.mode != Mode::ConfirmArchive {
+        f.render_widget(
+            Paragraph::new(status_left).style(Style::default().bg(Color::Indexed(238))),
+            status_layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(status_right)
+                .alignment(ratatui::layout::Alignment::Right)
+                .style(Style::default().bg(Color::Indexed(238))),
+            status_layout[1],
+        );
+
+        if self.mode != Mode::Normal
+            && self.mode != Mode::SchedulingCalendar
+            && self.mode != Mode::ConfirmArchive
+        {
             let title = match self.mode {
                 Mode::Search => " Search Tasks (Title / Notes) ",
                 Mode::EditingTitle => " Edit title ",
-                Mode::Capturing => " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
-                Mode::Tagging => " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) ",
-                Mode::SchedulingTimeRRule => " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) ",
+                Mode::Capturing => {
+                    " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) "
+                }
+                Mode::Tagging => {
+                    " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) "
+                }
+                Mode::SchedulingTimeRRule => {
+                    " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) "
+                }
                 Mode::SchedulingCalendar => "", // Not reached
                 Mode::WaitingWho => " Waiting for who/what? ",
                 Mode::WaitingWhen => " Reminder time? (e.g. +1d, tomorrow 10:00) ",
@@ -172,17 +252,22 @@ impl<'a> AppRender for App<'a> {
                 Mode::EditingRrule => " 循环规则? (空=清除, 如 FREQ=WEEKLY;BYDAY=SA,SU) ",
                 Mode::EditingDelegated => " 委派给? (空=清除) ",
                 Mode::EditingProjectType => " 项目类型? (parallel/sequential) ",
-                Mode::ConfiguringPomo => " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) ",
+                Mode::ConfiguringPomo => {
+                    " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) "
+                }
                 Mode::Normal | Mode::Visual | Mode::ConfirmArchive => "",
             };
-            
+
             let mut text_lines = vec![Line::from(format!(" {}_", self.input))];
             let mut height = 3;
             let width = if self.mode == Mode::Capturing { 70 } else { 50 };
 
             if self.mode == Mode::Capturing {
                 text_lines.push(Line::from(""));
-                text_lines.push(Line::from(Span::styled(" [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)", Style::default().fg(Color::DarkGray))));
+                text_lines.push(Line::from(Span::styled(
+                    " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)",
+                    Style::default().fg(Color::DarkGray),
+                )));
                 height = 5;
             }
 
@@ -195,12 +280,20 @@ impl<'a> AppRender for App<'a> {
                     height,
                 };
                 f.render_widget(ratatui::widgets::Clear, left_area);
-                let block = Block::default().title(title).borders(Borders::ALL).border_set(border::ROUNDED).border_style(Style::default().fg(Color::Yellow));
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .border_style(Style::default().fg(Color::Yellow));
                 f.render_widget(Paragraph::new(text_lines).block(block), left_area);
             } else {
                 let area = self.centered_rect(width, height, size);
                 f.render_widget(ratatui::widgets::Clear, area);
-                let block = Block::default().title(title).borders(Borders::ALL).border_set(border::ROUNDED).border_style(Style::default().fg(Color::Yellow));
+                let block = Block::default()
+                    .title(title)
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .border_style(Style::default().fg(Color::Yellow));
                 f.render_widget(Paragraph::new(text_lines).block(block), area);
             }
         }
@@ -233,7 +326,7 @@ impl<'a> AppRender for App<'a> {
 
         // ── 时间计算 ──
         let start_ts = pomo.start_ts.unwrap_or(now);
-        let end_ts   = pomo.end_ts.unwrap_or(now);
+        let end_ts = pomo.end_ts.unwrap_or(now);
         let total_ms = (end_ts - start_ts).max(1) as f64;
         let elapsed_fraction = ((now - start_ts) as f64 / total_ms).clamp(0.0, 1.0);
 
@@ -245,19 +338,22 @@ impl<'a> AppRender for App<'a> {
         // ── 阶段配色 ──
         let (phase_icon, phase_label, ring_color, dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
-                "🎯", "专注模式  —  进行中",
+                "🎯",
+                "专注模式  —  进行中",
                 Color::Rgb(230, 60, 60),
                 Color::Rgb(70, 25, 25),
                 Color::Rgb(14, 8, 8),
             ),
             Phase::ShortBreak => (
-                "☕", "小休中  —  喝杯水放松一下",
+                "☕",
+                "小休中  —  喝杯水放松一下",
                 Color::Rgb(60, 210, 110),
                 Color::Rgb(20, 65, 35),
                 Color::Rgb(8, 16, 10),
             ),
             Phase::LongBreak => (
-                "🌿", "长休中  —  好好休息",
+                "🌿",
+                "长休中  —  好好休息",
                 Color::Rgb(60, 150, 230),
                 Color::Rgb(20, 45, 75),
                 Color::Rgb(8, 12, 22),
@@ -266,10 +362,7 @@ impl<'a> AppRender for App<'a> {
         };
 
         // ── 全屏背景 ──
-        f.render_widget(
-            Block::default().style(Style::default().bg(bg_color)),
-            area,
-        );
+        f.render_widget(Block::default().style(Style::default().bg(bg_color)), area);
 
         // ── 布局（垂直分区）──
         let rows = Layout::default()
@@ -290,7 +383,12 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(
             Paragraph::new(format!("  {}  {}", phase_icon, phase_label))
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(ring_color).bg(bg_color).add_modifier(Modifier::BOLD)),
+                .style(
+                    Style::default()
+                        .fg(ring_color)
+                        .bg(bg_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
             rows[1],
         );
 
@@ -299,7 +397,12 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(
             Paragraph::new(format!("「{}」", task_title))
                 .alignment(Alignment::Center)
-                .style(Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD)),
+                .style(
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(bg_color)
+                        .add_modifier(Modifier::BOLD),
+                ),
             rows[2],
         );
 
@@ -343,7 +446,7 @@ impl<'a> AppRender for App<'a> {
                         let r = inner_r + ri as f64 * (outer_r - inner_r) / ring_steps as f64;
                         let x = cx_c + r * angle_rad.cos();
                         let y = cy_c + r * angle_rad.sin();
-                        if x < 0.5 || x > 99.5 || y < 0.5 || y > y_range - 0.5 {
+                        if !(0.5..=99.5).contains(&x) || y < 0.5 || y > y_range - 0.5 {
                             continue;
                         }
                         if frac >= ef {
@@ -353,8 +456,14 @@ impl<'a> AppRender for App<'a> {
                         }
                     }
                 }
-                ctx.draw(&Points { coords: &ela_pts, color: dc });
-                ctx.draw(&Points { coords: &rem_pts, color: rc });
+                ctx.draw(&Points {
+                    coords: &ela_pts,
+                    color: dc,
+                });
+                ctx.draw(&Points {
+                    coords: &rem_pts,
+                    color: rc,
+                });
 
                 // 刻度点（12 个，每隔 30°，显示在环外侧）
                 let mut tick_pts = vec![];
@@ -368,7 +477,10 @@ impl<'a> AppRender for App<'a> {
                         tick_pts.push((x, y));
                     }
                 }
-                ctx.draw(&Points { coords: &tick_pts, color: Color::Rgb(85, 85, 85) });
+                ctx.draw(&Points {
+                    coords: &tick_pts,
+                    color: Color::Rgb(85, 85, 85),
+                });
             });
         f.render_widget(canvas, canvas_area);
 
@@ -411,7 +523,8 @@ impl<'a> AppRender for App<'a> {
     fn render_help_drawer(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         f.render_widget(ratatui::widgets::Clear, area);
         let keys_block = Block::default()
-            .borders(Borders::ALL).border_set(border::ROUNDED)
+            .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(Style::default().fg(Color::Yellow))
             .title(" 快捷键指南 (F1/?) ");
         let keys = [
@@ -452,7 +565,12 @@ impl<'a> AppRender for App<'a> {
         };
         for (k, desc) in visible_keys.iter() {
             rows.push(ratatui::widgets::Row::new(vec![
-                ratatui::text::Line::from(Span::styled(format!("{:>6} ", k), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))),
+                ratatui::text::Line::from(Span::styled(
+                    format!("{:>6} ", k),
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                )),
                 ratatui::text::Line::from(Span::raw(*desc)),
             ]));
         }
@@ -466,34 +584,188 @@ impl<'a> AppRender for App<'a> {
     fn render_syntax_drawer(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         f.render_widget(ratatui::widgets::Clear, area);
         let syntax_block = Block::default()
-            .borders(Borders::ALL).border_set(border::ROUNDED)
+            .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(Style::default().fg(Color::Yellow))
             .title(" 语法说明指南 (Ctrl+P) ");
         let syntax = vec![
-            Line::from(Span::styled("快速录入语法 (按 a 捕获)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-            Line::from(vec![Span::raw("  "), Span::styled("@标签", Style::default().fg(Color::Green)), Span::raw("    添加情境或优先级, 如 "), Span::styled("@work @p1", Style::default().fg(Color::LightBlue)), Span::raw(" (支持 Tab 补全)")]),
-            Line::from(vec![Span::raw("  "), Span::styled("~时间", Style::default().fg(Color::Green)), Span::raw("    设置截止时间, 见下方时间语法")]),
-            Line::from(vec![Span::raw("  例: "), Span::styled("a买牛奶 @home ~tomorrow", Style::default().fg(Color::LightBlue)), Span::raw(" / "), Span::styled("a写周报 @work @p1 ~+3d", Style::default().fg(Color::LightBlue))]),
+            Line::from(Span::styled(
+                "快速录入语法 (按 a 捕获)",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("@标签", Style::default().fg(Color::Green)),
+                Span::raw("    添加情境或优先级, 如 "),
+                Span::styled("@work @p1", Style::default().fg(Color::LightBlue)),
+                Span::raw(" (支持 Tab 补全)"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("~时间", Style::default().fg(Color::Green)),
+                Span::raw("    设置截止时间, 见下方时间语法"),
+            ]),
+            Line::from(vec![
+                Span::raw("  例: "),
+                Span::styled(
+                    "a买牛奶 @home ~tomorrow",
+                    Style::default().fg(Color::LightBlue),
+                ),
+                Span::raw(" / "),
+                Span::styled(
+                    "a写周报 @work @p1 ~+3d",
+                    Style::default().fg(Color::LightBlue),
+                ),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("时间语法 (~ 与排期 c)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-            Line::from(vec![Span::raw("  "), Span::styled("now / +2h +30m +1d +1w", Style::default().fg(Color::Green)), Span::raw("    相对时间偏移")]),
-            Line::from(vec![Span::raw("  "), Span::styled("today / tomorrow [HH:MM]", Style::default().fg(Color::Green)), Span::raw("  今天/明天指定时刻")]),
-            Line::from(vec![Span::raw("  "), Span::styled("HH:MM", Style::default().fg(Color::Green)), Span::raw("                     当天指定时刻, 如 18:00")]),
-            Line::from(vec![Span::raw("  "), Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(Color::Green)), Span::raw("        绝对日期与时间")]),
+            Line::from(Span::styled(
+                "时间语法 (~ 与排期 c)",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("now / +2h +30m +1d +1w", Style::default().fg(Color::Green)),
+                Span::raw("    相对时间偏移"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    "today / tomorrow [HH:MM]",
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw("  今天/明天指定时刻"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("HH:MM", Style::default().fg(Color::Green)),
+                Span::raw("                     当天指定时刻, 如 18:00"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(Color::Green)),
+                Span::raw("        绝对日期与时间"),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("周期 / 循环任务 (Habit / RRULE)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-            Line::from(vec![Span::raw("  先按 "), Span::styled("c", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务")]),
-            Line::from(vec![Span::raw("  "), Span::styled("FREQ=DAILY|WEEKLY|MONTHLY", Style::default().fg(Color::Green)), Span::raw("   循环频率")]),
-            Line::from(vec![Span::raw("  "), Span::styled("INTERVAL=2", Style::default().fg(Color::Green)), Span::raw("                  循环间隔 (如每 2 周)")]),
-            Line::from(vec![Span::raw("  "), Span::styled("BYDAY=SA,SU", Style::default().fg(Color::Green)), Span::raw("                 指定周几 (MO TU WE TH FR SA SU)")]),
-            Line::from(vec![Span::raw("  "), Span::styled("COUNT=10 / UNTIL=YYYY-MM-DD", Style::default().fg(Color::Green)), Span::raw(" 终止条件")]),
-            Line::from(vec![Span::raw("  例: "), Span::styled(";FREQ=WEEKLY;BYDAY=SA,SU", Style::default().fg(Color::LightBlue)), Span::raw("    "), Span::styled(";FREQ=DAILY;COUNT=30", Style::default().fg(Color::LightBlue))]),
+            Line::from(Span::styled(
+                "周期 / 循环任务 (Habit / RRULE)",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::raw("  先按 "),
+                Span::styled(
+                    "c",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    "FREQ=DAILY|WEEKLY|MONTHLY",
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw("   循环频率"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("INTERVAL=2", Style::default().fg(Color::Green)),
+                Span::raw("                  循环间隔 (如每 2 周)"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("BYDAY=SA,SU", Style::default().fg(Color::Green)),
+                Span::raw("                 指定周几 (MO TU WE TH FR SA SU)"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled(
+                    "COUNT=10 / UNTIL=YYYY-MM-DD",
+                    Style::default().fg(Color::Green),
+                ),
+                Span::raw(" 终止条件"),
+            ]),
+            Line::from(vec![
+                Span::raw("  例: "),
+                Span::styled(
+                    ";FREQ=WEEKLY;BYDAY=SA,SU",
+                    Style::default().fg(Color::LightBlue),
+                ),
+                Span::raw("    "),
+                Span::styled(
+                    ";FREQ=DAILY;COUNT=30",
+                    Style::default().fg(Color::LightBlue),
+                ),
+            ]),
             Line::from(""),
-            Line::from(Span::styled("其他操作说明", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
-            Line::from(vec![Span::raw("  等待 "), Span::styled("w", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 后可填写 [谁/何时], 如 "), Span::styled("w → Alice → +1d", Style::default().fg(Color::LightBlue))]),
-            Line::from(vec![Span::raw("  子任务 "), Span::styled("C", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 新增, "), Span::styled("Space", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 依次打卡, 全部完成自动重置")]),
-            Line::from(vec![Span::raw("  标签库 (视图9): 按 "), Span::styled("a", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 动态新增, 按 "), Span::styled("D", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 删除")]),
-            Line::from(vec![Span::raw("  按 "), Span::styled("Ctrl+P", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 弹出/关闭本语法说明指南")]),
+            Line::from(Span::styled(
+                "其他操作说明",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(vec![
+                Span::raw("  等待 "),
+                Span::styled(
+                    "w",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 后可填写 [谁/何时], 如 "),
+                Span::styled("w → Alice → +1d", Style::default().fg(Color::LightBlue)),
+            ]),
+            Line::from(vec![
+                Span::raw("  子任务 "),
+                Span::styled(
+                    "C",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 新增, "),
+                Span::styled(
+                    "Space",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 依次打卡, 全部完成自动重置"),
+            ]),
+            Line::from(vec![
+                Span::raw("  标签库 (视图9): 按 "),
+                Span::styled(
+                    "a",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 动态新增, 按 "),
+                Span::styled(
+                    "D",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 删除"),
+            ]),
+            Line::from(vec![
+                Span::raw("  按 "),
+                Span::styled(
+                    "Ctrl+P",
+                    Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" 弹出/关闭本语法说明指南"),
+            ]),
         ];
         let para = Paragraph::new(syntax)
             .block(syntax_block)
@@ -509,17 +781,17 @@ impl<'a> AppRender for App<'a> {
                 Constraint::Length(height),
                 Constraint::Min(0),
             ])
-        .split(r);
+            .split(r);
 
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1])[1]
-}
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ])
+            .split(popup_layout[1])[1]
+    }
 
     fn render_guide(&self, f: &mut ratatui::Frame, area: Rect) {
         let mut lines: Vec<Line> = Vec::new();
@@ -527,7 +799,9 @@ impl<'a> AppRender for App<'a> {
         if self.total_count() == 0 {
             lines.push(Line::from(Span::styled(
                 " 欢迎使用 gtp",
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
         }
@@ -538,7 +812,9 @@ impl<'a> AppRender for App<'a> {
         let mut add_group = |views: &[(char, View)], title: &'static str| {
             lines.push(Line::from(Span::styled(
                 title,
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD),
             )));
             for (key, v) in views {
                 let cnt = self.context_count(*v);
@@ -559,7 +835,9 @@ impl<'a> AppRender for App<'a> {
                 let padded_label = pad_right(label, 10);
 
                 if active {
-                    let mut style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                    let mut style = Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD);
                     if is_left_pane {
                         style = style.add_modifier(Modifier::REVERSED);
                     }
@@ -578,14 +856,28 @@ impl<'a> AppRender for App<'a> {
         };
 
         add_group(&[('1', View::Inbox), ('2', View::Next)], "  [Active]");
-        add_group(&[('3', View::Waiting), ('4', View::Scheduled), ('5', View::Someday)], "  [Waiting]");
+        add_group(
+            &[
+                ('3', View::Waiting),
+                ('4', View::Scheduled),
+                ('5', View::Someday),
+            ],
+            "  [Waiting]",
+        );
         add_group(&[('6', View::Reference), ('7', View::Done)], "  [Archive]");
-        
+
         lines.push(Line::from(Span::styled(
             "  [Modules]",
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
         )));
-        for (key, v) in &[('p', View::Projects), ('r', View::Review), ('9', View::Tags), ('8', View::Archived)] {
+        for (key, v) in &[
+            ('p', View::Projects),
+            ('r', View::Review),
+            ('9', View::Tags),
+            ('8', View::Archived),
+        ] {
             let active = cur == *v;
             let (icon, label) = match v {
                 View::Projects => ("", "项目树"),
@@ -596,7 +888,9 @@ impl<'a> AppRender for App<'a> {
             };
             let padded_label = pad_right(label, 10);
             if active {
-                let mut style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                let mut style = Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD);
                 if is_left_pane {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
@@ -614,46 +908,76 @@ impl<'a> AppRender for App<'a> {
         lines.push(Line::from(""));
 
         // 提示
-        lines.push(Line::from(Span::styled("  [Hint]", Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD))));
-        lines.push(Line::from(Span::styled(format!("  {}", next_hint(self.view)), Style::default().fg(Color::Gray))));
+        lines.push(Line::from(Span::styled(
+            "  [Hint]",
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            format!("  {}", next_hint(self.view)),
+            Style::default().fg(Color::Gray),
+        )));
 
-        let border_color = if self.pane == Pane::Left { Color::Yellow } else { Color::DarkGray };
+        let border_color = if self.pane == Pane::Left {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
         f.render_widget(
-            Paragraph::new(lines).block(Block::default().borders(Borders::ALL).border_set(border::ROUNDED).border_style(Style::default().fg(border_color)).title(" Guide ")),
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .border_style(Style::default().fg(border_color))
+                    .title(" Guide "),
+            ),
             area,
         );
     }
 
     fn render_list(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let border_color = if self.pane == Pane::Center { Color::Yellow } else { Color::DarkGray };
+        let border_color = if self.pane == Pane::Center {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
         let items = build_list_items(self);
         let title = format!(
             " Tasks · {}{} ",
             self.view.label(),
-            if let Some(ref tf) = self.tag_filter { format!(" [@{}]", tf) } else { String::new() }
+            if let Some(ref tf) = self.tag_filter {
+                format!(" [@{}]", tf)
+            } else {
+                String::new()
+            }
         );
         let list = List::new(items)
             .block(
                 Block::default()
-                    .borders(Borders::ALL).border_set(border::ROUNDED)
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
                     .border_style(Style::default().fg(border_color))
                     .title(title),
             )
-            .highlight_style(
-                if self.pane == Pane::Center {
-                    Style::default().add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                },
-            );
+            .highlight_style(if self.pane == Pane::Center {
+                Style::default().add_modifier(Modifier::REVERSED)
+            } else {
+                Style::default()
+            });
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
 
     fn render_detail(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         f.render_widget(ratatui::widgets::Clear, area);
-        let border_color = if self.pane == Pane::Right { Color::Yellow } else { Color::DarkGray };
+        let border_color = if self.pane == Pane::Right {
+            Color::Yellow
+        } else {
+            Color::DarkGray
+        };
         let block = Block::default()
-            .borders(Borders::ALL).border_set(border::ROUNDED)
+            .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
             .border_style(Style::default().fg(border_color))
             .title(" 任务详情 ");
 
@@ -663,18 +987,29 @@ impl<'a> AppRender for App<'a> {
             }
             Some(d) => {
                 let mut lines: Vec<Line> = vec![];
-                
+
                 // 标题
                 lines.push(Line::from(vec![
-                    Span::styled("标题: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                    Span::styled(d.task.title.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        "标题: ",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        d.task.title.clone(),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
                 ]));
 
                 // 状态
                 let st_color = ui::status_color(&d.task.status);
                 lines.push(Line::from(vec![
                     Span::styled("状态: ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(status_cn(d.task.status), Style::default().fg(st_color).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        status_cn(d.task.status),
+                        Style::default().fg(st_color).add_modifier(Modifier::BOLD),
+                    ),
                 ]));
 
                 // 项目
@@ -695,13 +1030,18 @@ impl<'a> AppRender for App<'a> {
                 if d.task.scheduled_start_at.is_some() || d.task.scheduled_end_at.is_some() {
                     lines.push(Line::from(vec![
                         Span::styled("计划: ", Style::default().fg(Color::DarkGray)),
-                        Span::raw(format!("{} -> {}", time::format_local(d.task.scheduled_start_at), time::format_local(d.task.scheduled_end_at))),
+                        Span::raw(format!(
+                            "{} -> {}",
+                            time::format_local(d.task.scheduled_start_at),
+                            time::format_local(d.task.scheduled_end_at)
+                        )),
                     ]));
                 }
 
                 // 循环规则
                 if let Some(rr) = &d.task.rrule {
-                    let cn_rr = rr.replace("FREQ=DAILY", "每天")
+                    let cn_rr = rr
+                        .replace("FREQ=DAILY", "每天")
                         .replace("FREQ=WEEKLY", "每周")
                         .replace("FREQ=MONTHLY", "每月")
                         .replace("INTERVAL=", "间隔=")
@@ -715,10 +1055,14 @@ impl<'a> AppRender for App<'a> {
 
                 // 标签
                 if !d.tags.is_empty() {
-                    let mut tag_spans = vec![Span::styled("标签: ", Style::default().fg(Color::DarkGray))];
+                    let mut tag_spans =
+                        vec![Span::styled("标签: ", Style::default().fg(Color::DarkGray))];
                     for (i, tg) in d.tags.iter().enumerate() {
                         let c = ui::priority_color(&tg.name).unwrap_or(Color::Cyan);
-                        tag_spans.push(Span::styled(format!("@{}", tg.name), Style::default().fg(c)));
+                        tag_spans.push(Span::styled(
+                            format!("@{}", tg.name),
+                            Style::default().fg(c),
+                        ));
                         if i < d.tags.len() - 1 {
                             tag_spans.push(Span::raw(" "));
                         }
@@ -747,10 +1091,19 @@ impl<'a> AppRender for App<'a> {
                     )
                     .unwrap_or_default();
                     let total = children.len();
-                    let done = children.iter().filter(|c| c.status == task::Status::Done).count();
+                    let done = children
+                        .iter()
+                        .filter(|c| c.status == task::Status::Done)
+                        .count();
                     let bar = if total > 0 {
                         let filled = (done as f64 / total as f64 * 10.0).round() as usize;
-                        format!("[{}{}] {}/{}", "█".repeat(filled), "░".repeat(10 - filled), done, total)
+                        format!(
+                            "[{}{}] {}/{}",
+                            "█".repeat(filled),
+                            "░".repeat(10 - filled),
+                            done,
+                            total
+                        )
                     } else {
                         "[----------] 0/0".to_string()
                     };
@@ -759,39 +1112,67 @@ impl<'a> AppRender for App<'a> {
                         Span::styled(bar, Style::default().fg(Color::Green)),
                     ]));
                 } else if !d.task.checklist.is_empty() {
-                    lines.push(Line::from(Span::styled("检查单:", Style::default().fg(Color::DarkGray))));
+                    lines.push(Line::from(Span::styled(
+                        "检查单:",
+                        Style::default().fg(Color::DarkGray),
+                    )));
                     for item in &d.task.checklist {
                         let check = if item.done { "[x]" } else { "[ ]" };
-                        let c = if item.done { Color::Green } else { Color::DarkGray };
-                        lines.push(Line::from(Span::styled(format!("  {} {}", check, item.title), Style::default().fg(c))));
+                        let c = if item.done {
+                            Color::Green
+                        } else {
+                            Color::DarkGray
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("  {} {}", check, item.title),
+                            Style::default().fg(c),
+                        )));
                     }
                 }
 
                 // 番茄钟计数
-                let pomo_count = d.events.iter().filter(|e| e.event_type == event::EV_POMODORO).count();
+                let pomo_count = d
+                    .events
+                    .iter()
+                    .filter(|e| e.event_type == event::EV_POMODORO)
+                    .count();
                 if pomo_count > 0 {
                     let tomatoes = " ".repeat(pomo_count);
                     lines.push(Line::from(vec![
                         Span::styled("专注: ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(format!("{} ({})", tomatoes, pomo_count), Style::default().fg(Color::Red)),
+                        Span::styled(
+                            format!("{} ({})", tomatoes, pomo_count),
+                            Style::default().fg(Color::Red),
+                        ),
                     ]));
                 }
 
                 // 分隔线
-                lines.push(Line::from("─".repeat((area.width.saturating_sub(4)) as usize)));
+                lines.push(Line::from(
+                    "─".repeat((area.width.saturating_sub(4)) as usize),
+                ));
 
                 // 备注
                 if d.task.notes.trim().is_empty() {
-                    lines.push(Line::from(Span::styled("备注: -", Style::default().fg(Color::DarkGray))));
+                    lines.push(Line::from(Span::styled(
+                        "备注: -",
+                        Style::default().fg(Color::DarkGray),
+                    )));
                 } else {
-                    lines.push(Line::from(Span::styled("备注:", Style::default().add_modifier(Modifier::BOLD))));
+                    lines.push(Line::from(Span::styled(
+                        "备注:",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    )));
                     for ln in d.task.notes.split('\n') {
                         lines.push(Line::from(format!("  {}", ln)));
                     }
                 }
 
                 lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled("时间线", Style::default().add_modifier(Modifier::UNDERLINED))));
+                lines.push(Line::from(Span::styled(
+                    "时间线",
+                    Style::default().add_modifier(Modifier::UNDERLINED),
+                )));
                 for e in d.events.iter().rev().take(6).rev() {
                     let event_cn = match e.event_type.as_str() {
                         "created" => "创建",
@@ -802,8 +1183,20 @@ impl<'a> AppRender for App<'a> {
                         _ => &e.event_type,
                     };
 
-                    let from_cn = e.from_status.as_deref().unwrap_or("-").parse::<crate::model::task::Status>().map(status_cn).unwrap_or("-");
-                    let to_cn = e.to_status.as_deref().unwrap_or("-").parse::<crate::model::task::Status>().map(status_cn).unwrap_or("-");
+                    let from_cn = e
+                        .from_status
+                        .as_deref()
+                        .unwrap_or("-")
+                        .parse::<crate::model::task::Status>()
+                        .map(status_cn)
+                        .unwrap_or("-");
+                    let to_cn = e
+                        .to_status
+                        .as_deref()
+                        .unwrap_or("-")
+                        .parse::<crate::model::task::Status>()
+                        .map(status_cn)
+                        .unwrap_or("-");
 
                     let action = if e.event_type == "status_change" {
                         format!("{} -> {}", from_cn, to_cn)
@@ -813,7 +1206,12 @@ impl<'a> AppRender for App<'a> {
                         "".to_string()
                     };
 
-                    lines.push(Line::from(format!("  {} {} {}", time::format_local(Some(e.at)), event_cn, action)));
+                    lines.push(Line::from(format!(
+                        "  {} {} {}",
+                        time::format_local(Some(e.at)),
+                        event_cn,
+                        action
+                    )));
                 }
 
                 let para = Paragraph::new(lines)
@@ -845,7 +1243,10 @@ impl<'a> AppRender for App<'a> {
 
         // 左：状态分布
         let lines = vec![
-            Line::from(Span::styled(" 状态分布", Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(Span::styled(
+                " 状态分布",
+                Style::default().add_modifier(Modifier::BOLD),
+            )),
             Line::from(""),
             Line::from(format!(" 收件箱   : {}", c("inbox"))),
             Line::from(format!(" 下一步   : {}", c("next"))),
@@ -857,7 +1258,8 @@ impl<'a> AppRender for App<'a> {
         ];
         let para = Paragraph::new(lines).block(
             Block::default()
-                .borders(Borders::ALL).border_set(border::ROUNDED)
+                .borders(Borders::ALL)
+                .border_set(border::ROUNDED)
                 .border_style(Style::default().fg(Color::DarkGray))
                 .title(" Review "),
         );
@@ -868,18 +1270,27 @@ impl<'a> AppRender for App<'a> {
         let labels: Vec<String> = data.iter().map(|(d, _)| d.clone()).collect();
         let values: Vec<u64> = data.iter().map(|(_, n)| *n as u64).collect();
         let maxv = values.iter().cloned().max().unwrap_or(0).max(1);
-        let chart_data: Vec<(&str, u64)> = labels.iter().map(|s| s.as_str()).zip(values.iter().cloned()).collect();
+        let chart_data: Vec<(&str, u64)> = labels
+            .iter()
+            .map(|s| s.as_str())
+            .zip(values.iter().cloned())
+            .collect();
         let chart = ratatui::widgets::BarChart::default()
             .block(
                 Block::default()
-                    .borders(Borders::ALL).border_set(border::ROUNDED)
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
                     .border_style(Style::default().fg(Color::DarkGray))
                     .title(" 近7天完成趋势 "),
             )
             .data(&chart_data)
             .bar_width(6)
             .bar_style(Style::default().fg(Color::Green))
-            .value_style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
+            .value_style(
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD),
+            )
             .label_style(Style::default().fg(Color::DarkGray))
             .max(maxv);
         f.render_widget(chart, chunks[1]);
@@ -901,7 +1312,7 @@ fn big_digit_rows(c: char) -> [&'static str; 5] {
         '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
         '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
         ':' => ["    ", " ██ ", "    ", " ██ ", "    "],
-        _   => ["    ", "    ", "    ", "    ", "    "],
+        _ => ["    ", "    ", "    ", "    ", "    "],
     }
 }
 

@@ -1,11 +1,11 @@
 use super::app::{App, Mode, Pane, View};
+use super::calendar;
+use crate::model::task::{self};
+use crate::repo::tasks::CaptureInput;
+use crate::repo::{tags, tasks};
+use crate::time;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use crate::model::task::{self};
-use crate::repo::{tasks, tags};
-use crate::repo::tasks::CaptureInput;
-use crate::time;
-use super::calendar;
 
 fn short_id(id: &str) -> String {
     id.chars().take(8).collect()
@@ -116,21 +116,20 @@ impl<'a> AppHandlers for App<'a> {
                 self.set_view(View::Inbox);
                 self.status_message = "Weekly Review started".into();
             }
-            KeyCode::Char('R')
-                if self.is_reviewing => {
-                    self.review_step += 1;
-                    match self.review_step {
-                        2 => self.set_view(View::Projects),
-                        3 => self.set_view(View::Waiting),
-                        4 => self.set_view(View::Someday),
-                        _ => {
-                            self.is_reviewing = false;
-                            self.review_step = 0;
-                            self.set_view(View::Next);
-                            self.status_message = "Weekly Review Complete! 🎉".into();
-                        }
+            KeyCode::Char('R') if self.is_reviewing => {
+                self.review_step += 1;
+                match self.review_step {
+                    2 => self.set_view(View::Projects),
+                    3 => self.set_view(View::Waiting),
+                    4 => self.set_view(View::Someday),
+                    _ => {
+                        self.is_reviewing = false;
+                        self.review_step = 0;
+                        self.set_view(View::Next);
+                        self.status_message = "Weekly Review Complete! 🎉".into();
                     }
                 }
+            }
             KeyCode::Char('a') => {
                 if self.view == View::Tags {
                     self.set_mode(Mode::CreatingTag);
@@ -150,23 +149,31 @@ impl<'a> AppHandlers for App<'a> {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(task) = tasks::get(self.conn, &row.id) {
                         crossterm::terminal::disable_raw_mode()?;
-                        crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-                        
+                        crossterm::execute!(
+                            std::io::stdout(),
+                            crossterm::terminal::LeaveAlternateScreen
+                        )?;
+
                         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
                         let mut temp_file = tempfile::NamedTempFile::new()?;
                         use std::io::Write;
                         temp_file.write_all(task.notes.as_bytes())?;
-                        
-                        let _ = std::process::Command::new(editor).arg(temp_file.path()).status();
-                        
+
+                        let _ = std::process::Command::new(editor)
+                            .arg(temp_file.path())
+                            .status();
+
                         if let Ok(new_notes) = std::fs::read_to_string(temp_file.path()) {
                             if new_notes != task.notes {
                                 let _ = tasks::update_notes(self.conn, &task.id, &new_notes);
                             }
                         }
-                        
+
                         crossterm::terminal::enable_raw_mode()?;
-                        crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+                        crossterm::execute!(
+                            std::io::stdout(),
+                            crossterm::terminal::EnterAlternateScreen
+                        )?;
                         self.needs_clear = true;
                         self.load_detail();
                     }
@@ -214,7 +221,8 @@ impl<'a> AppHandlers for App<'a> {
                     // 复用规划钩子中的项目归属流程 (空/Esc 跳过)
                     self.set_mode(Mode::PlanningProject);
                     self.input.clear();
-                    self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过)", short_id(&row.id));
+                    self.status_message =
+                        format!("{} 归到哪个项目? (空/Esc 跳过)", short_id(&row.id));
                 }
             }
             KeyCode::Char('W') => {
@@ -231,7 +239,10 @@ impl<'a> AppHandlers for App<'a> {
                         if t.kind == task::TaskKind::Project {
                             self.set_mode(Mode::EditingProjectType);
                             self.input.clear();
-                            self.status_message = format!("{} 项目类型? (parallel/sequential, 空/Esc 跳过)", short_id(&row.id));
+                            self.status_message = format!(
+                                "{} 项目类型? (parallel/sequential, 空/Esc 跳过)",
+                                short_id(&row.id)
+                            );
                         } else {
                             self.status_message = "仅项目可设置项目类型".into();
                         }
@@ -241,7 +252,12 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('C') => {
                 let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
                 self.set_mode(Mode::ConfiguringPomo);
-                self.input = format!("{};{};{}", pomo.config.work_mins, pomo.config.short_break_mins, pomo.config.long_break_mins);
+                self.input = format!(
+                    "{};{};{}",
+                    pomo.config.work_mins,
+                    pomo.config.short_break_mins,
+                    pomo.config.long_break_mins
+                );
             }
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
@@ -278,33 +294,41 @@ impl<'a> AppHandlers for App<'a> {
                 );
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
-            KeyCode::Char('K')
-                if self.items.get(self.selected).is_some() => {
-                    self.set_mode(Mode::ChecklistAdding);
-                    self.input.clear();
-                }
+            KeyCode::Char('K') if self.items.get(self.selected).is_some() => {
+                self.set_mode(Mode::ChecklistAdding);
+                self.input.clear();
+            }
             KeyCode::Char(' ') => {
                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
-                    let is_in_break = matches!(pomo.phase, crate::model::pomodoro::Phase::ShortBreak | crate::model::pomodoro::Phase::LongBreak);
+                    let is_in_break = matches!(
+                        pomo.phase,
+                        crate::model::pomodoro::Phase::ShortBreak
+                            | crate::model::pomodoro::Phase::LongBreak
+                    );
                     // 跨天检测：Idle 且 last_date 是今天，才触发续杯逻辑
                     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
                     let today_active = pomo.last_date.as_deref() == Some(today.as_str());
                     let is_post_break_idle = pomo.phase == crate::model::pomodoro::Phase::Idle
                         && today_active
                         && (pomo.today_count > 0 || pomo.task_id.is_some());
-                    
+
                     if is_in_break || is_post_break_idle {
-                        let target_id = self.items.get(self.selected).map(|r| r.id.clone())
+                        let target_id = self
+                            .items
+                            .get(self.selected)
+                            .map(|r| r.id.clone())
                             .or(pomo.task_id);
                         if let Some(tid) = target_id {
                             if let Ok(t) = tasks::get(self.conn, &tid) {
-                                if t.status != task::Status::Next && t.status != task::Status::Done {
+                                if t.status != task::Status::Next && t.status != task::Status::Done
+                                {
                                     let _ = tasks::transition(self.conn, &tid, task::Status::Next);
                                     let _ = self.refresh();
                                 }
                             }
                             let _ = crate::commands::pomo::start(self.conn, &tid);
-                            self.status_message = format!("🚀 零摩擦开启新一轮专注！ ({})", short_id(&tid));
+                            self.status_message =
+                                format!("🚀 零摩擦开启新一轮专注！ ({})", short_id(&tid));
                             self.load_detail();
                             return Ok(());
                         }
@@ -320,7 +344,8 @@ impl<'a> AppHandlers for App<'a> {
                                 toggled_title = item.title.clone();
                             }
                             if !toggled_title.is_empty() {
-                                let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
+                                let _ =
+                                    tasks::update_checklist(self.conn, &task.id, &task.checklist);
                                 self.status_message = format!("打卡: {}", toggled_title);
                                 self.load_detail();
                             } else {
@@ -328,7 +353,8 @@ impl<'a> AppHandlers for App<'a> {
                                 for item in task.checklist.iter_mut() {
                                     item.done = false;
                                 }
-                                let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
+                                let _ =
+                                    tasks::update_checklist(self.conn, &task.id, &task.checklist);
                                 self.status_message = "重置检查单".to_string();
                                 self.load_detail();
                             }
@@ -337,8 +363,15 @@ impl<'a> AppHandlers for App<'a> {
                 }
             }
             KeyCode::Char('P') => {
-                let target_id = self.items.get(self.selected).map(|r| r.id.clone())
-                    .or_else(|| crate::repo::pomodoro::get_state().ok().and_then(|s| s.task_id));
+                let target_id = self
+                    .items
+                    .get(self.selected)
+                    .map(|r| r.id.clone())
+                    .or_else(|| {
+                        crate::repo::pomodoro::get_state()
+                            .ok()
+                            .and_then(|s| s.task_id)
+                    });
                 if let Some(tid) = target_id {
                     if let Ok(t) = tasks::get(self.conn, &tid) {
                         if t.status != task::Status::Next && t.status != task::Status::Done {
@@ -347,7 +380,8 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     let _ = crate::commands::pomo::start(self.conn, &tid);
-                    self.status_message = format!("🎯 Focus & Pomodoro started for {}", short_id(&tid));
+                    self.status_message =
+                        format!("🎯 Focus & Pomodoro started for {}", short_id(&tid));
                     self.load_detail();
                 }
             }
@@ -395,7 +429,10 @@ impl<'a> AppHandlers for App<'a> {
                     let mut count = 0;
                     for id in &ids {
                         if let Ok(task) = tasks::get(self.conn, id) {
-                            if matches!(task.status, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                            if matches!(
+                                task.status,
+                                task::Status::Done | task::Status::Waiting | task::Status::Someday
+                            ) {
                                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
                                     if pomo.task_id.as_deref() == Some(id) {
                                         let _ = crate::commands::pomo::stop();
@@ -443,18 +480,27 @@ impl<'a> AppHandlers for App<'a> {
                 self.confirm_input(mode, &input)?;
             }
             KeyCode::Tab => {
-                if matches!(self.mode, Mode::Tagging | Mode::FilteringTag | Mode::Capturing) {
-                    let last_word = self.input.split_whitespace().last().unwrap_or("").to_string();
-                    let tag_token = if last_word.starts_with('@') {
-                        last_word[1..].to_string()
+                if matches!(
+                    self.mode,
+                    Mode::Tagging | Mode::FilteringTag | Mode::Capturing
+                ) {
+                    let last_word = self
+                        .input
+                        .split_whitespace()
+                        .last()
+                        .unwrap_or("")
+                        .to_string();
+                    let tag_token = if let Some(stripped) = last_word.strip_prefix('@') {
+                        stripped.to_string()
                     } else {
-                        last_word.clone()
+                        last_word.to_string()
                     };
                     if !tag_token.is_empty() {
                         // 优先硬编码的核心 5 个快捷标签，再动态查询 DB 数据库中所有已知标签（包括自定义标签）
-                        let default_tags = vec!["home", "work", "errands", "quick", "focus"];
-                        let mut all_tag_names: Vec<String> = default_tags.iter().map(|s| s.to_string()).collect();
-                        
+                        let default_tags = ["home", "work", "errands", "quick", "focus"];
+                        let mut all_tag_names: Vec<String> =
+                            default_tags.iter().map(|s| s.to_string()).collect();
+
                         if let Ok(db_tags) = tags::list_tags(self.conn) {
                             for t in db_tags {
                                 if !all_tag_names.contains(&t.name) {
@@ -463,7 +509,9 @@ impl<'a> AppHandlers for App<'a> {
                             }
                         }
 
-                        if let Some(matched) = all_tag_names.iter().find(|p| p.starts_with(&tag_token)) {
+                        if let Some(matched) =
+                            all_tag_names.iter().find(|p| p.starts_with(&tag_token))
+                        {
                             let prefix_len = tag_token.len();
                             if !last_word.starts_with('@') {
                                 let last_word_len = last_word.len();
@@ -544,7 +592,11 @@ impl<'a> AppHandlers for App<'a> {
             Mode::EditingRrule => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     let inp = input.trim();
-                    let rrule = if inp.is_empty() { None } else { Some(inp.to_string()) };
+                    let rrule = if inp.is_empty() {
+                        None
+                    } else {
+                        Some(inp.to_string())
+                    };
                     let set = rrule.is_some();
                     tasks::set_rrule(self.conn, &row.id, rrule)?;
                     self.status_message = if set {
@@ -559,7 +611,11 @@ impl<'a> AppHandlers for App<'a> {
             Mode::EditingDelegated => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     let inp = input.trim();
-                    let who = if inp.is_empty() { None } else { Some(inp.to_string()) };
+                    let who = if inp.is_empty() {
+                        None
+                    } else {
+                        Some(inp.to_string())
+                    };
                     let set = who.is_some();
                     tasks::set_delegated(self.conn, &row.id, who)?;
                     self.status_message = if set {
@@ -602,7 +658,11 @@ impl<'a> AppHandlers for App<'a> {
                             title: quick_add.title,
                             kind: task::TaskKind::Action,
                             parent_id: None,
-                            status: if due_at.is_some() { task::Status::Scheduled } else { task::Status::Inbox },
+                            status: if due_at.is_some() {
+                                task::Status::Scheduled
+                            } else {
+                                task::Status::Inbox
+                            },
                             due_at,
                             tag_names: quick_add.tags,
                             ..Default::default()
@@ -621,7 +681,7 @@ impl<'a> AppHandlers for App<'a> {
                     } else if let Some(row) = self.items.get(self.selected).cloned() {
                         ids.push(row.id);
                     }
-                    
+
                     let mut count = 0;
                     for id in ids {
                         if tags::add_tag_to_task(self.conn, &id, name).is_ok() {
@@ -640,23 +700,42 @@ impl<'a> AppHandlers for App<'a> {
                 if let Some((start_d, end_d)) = self.sched_dates.take() {
                     let parts: Vec<&str> = input.splitn(2, ';').collect();
                     let time_part = parts[0].trim();
-                    let rrule_part = parts.get(1).map(|s| s.trim_start_matches("rrule=").trim().to_string());
+                    let rrule_part = parts
+                        .get(1)
+                        .map(|s| s.trim_start_matches("rrule=").trim().to_string());
                     let final_rrule = rrule_part.filter(|r| !r.is_empty());
 
                     let (start_t_str, end_t_str) = if time_part.contains('-') {
                         let mut s = time_part.splitn(2, '-');
-                        (s.next().unwrap_or("00:00").trim(), s.next().unwrap_or("23:59").trim())
+                        (
+                            s.next().unwrap_or("00:00").trim(),
+                            s.next().unwrap_or("23:59").trim(),
+                        )
                     } else if !time_part.is_empty() {
                         (time_part, "23:59")
                     } else {
                         ("00:00", "23:59")
                     };
 
-                    let start_time = chrono::NaiveTime::parse_from_str(start_t_str, "%H:%M").unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0,0,0).unwrap());
-                    let end_time = chrono::NaiveTime::parse_from_str(end_t_str, "%H:%M").unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(23,59,59).unwrap());
+                    let start_time = chrono::NaiveTime::parse_from_str(start_t_str, "%H:%M")
+                        .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+                    let end_time = chrono::NaiveTime::parse_from_str(end_t_str, "%H:%M")
+                        .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(23, 59, 59).unwrap());
 
-                    let start_ms = start_d.and_time(start_time).and_local_timezone(chrono::Local).single().map(|t| t.timestamp_millis()).unwrap_or_else(|| start_d.and_time(start_time).and_utc().timestamp_millis());
-                    let end_ms = end_d.and_time(end_time).and_local_timezone(chrono::Local).single().map(|t| t.timestamp_millis()).unwrap_or_else(|| end_d.and_time(end_time).and_utc().timestamp_millis());
+                    let start_ms = start_d
+                        .and_time(start_time)
+                        .and_local_timezone(chrono::Local)
+                        .single()
+                        .map(|t| t.timestamp_millis())
+                        .unwrap_or_else(|| {
+                            start_d.and_time(start_time).and_utc().timestamp_millis()
+                        });
+                    let end_ms = end_d
+                        .and_time(end_time)
+                        .and_local_timezone(chrono::Local)
+                        .single()
+                        .map(|t| t.timestamp_millis())
+                        .unwrap_or_else(|| end_d.and_time(end_time).and_utc().timestamp_millis());
 
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         let _ = tasks::schedule(
@@ -770,11 +849,9 @@ impl<'a> AppHandlers for App<'a> {
             }
             Mode::CreatingTag => {
                 let name = input.trim().trim_start_matches('@');
-                if !name.is_empty() {
-                    if let Ok(_) = tags::find_or_create_tag(self.conn, name) {
-                        self.status_message = format!("Tag @{} created", name);
-                        self.refresh()?;
-                    }
+                if !name.is_empty() && tags::find_or_create_tag(self.conn, name).is_ok() {
+                    self.status_message = format!("created tag: {}", name);
+                    self.refresh()?;
                 }
                 self.set_mode(Mode::Normal);
                 self.input.clear();
@@ -782,14 +859,21 @@ impl<'a> AppHandlers for App<'a> {
             Mode::ConfiguringPomo => {
                 let parts: Vec<&str> = input.split(';').map(|s| s.trim()).collect();
                 if parts.len() == 3 {
-                    if let (Ok(w), Ok(s), Ok(l)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>(), parts[2].parse::<u32>()) {
+                    if let (Ok(w), Ok(s), Ok(l)) = (
+                        parts[0].parse::<u32>(),
+                        parts[1].parse::<u32>(),
+                        parts[2].parse::<u32>(),
+                    ) {
                         if w > 0 && s > 0 && l > 0 {
                             let mut pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
                             pomo.config.work_mins = w;
                             pomo.config.short_break_mins = s;
                             pomo.config.long_break_mins = l;
                             if crate::repo::pomodoro::save_state(&pomo).is_ok() {
-                                self.status_message = format!("🍅 番茄钟配置已更新: 工作 {}m / 短休 {}m / 长休 {}m", w, s, l);
+                                self.status_message = format!(
+                                    "🍅 番茄钟配置已更新: 工作 {}m / 短休 {}m / 长休 {}m",
+                                    w, s, l
+                                );
                             }
                         } else {
                             self.status_message = "时长必须大于0".into();

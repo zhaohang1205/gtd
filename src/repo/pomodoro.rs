@@ -1,7 +1,7 @@
+use crate::model::pomodoro::PomoState;
+use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
-use anyhow::Result;
-use crate::model::pomodoro::PomoState;
 
 pub fn pomo_file_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));

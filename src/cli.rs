@@ -12,27 +12,41 @@ pub enum Command {
     /// Capture a new item into the inbox
     Capture {
         title: String,
-        #[arg(long)] project: Option<String>,
-        #[arg(long)] tag: Vec<String>,
-        #[arg(long)] p1: bool,
-        #[arg(long)] p2: bool,
-        #[arg(long)] p3: bool,
-        #[arg(long)] due: Option<String>,
-        #[arg(long)] status: Option<String>,
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        tag: Vec<String>,
+        #[arg(long)]
+        p1: bool,
+        #[arg(long)]
+        p2: bool,
+        #[arg(long)]
+        p3: bool,
+        #[arg(long)]
+        due: Option<String>,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     /// List tasks (optional filters)
     List {
-        #[arg(long)] status: Option<String>,
-        #[arg(long)] tag: Vec<String>,
-        #[arg(long)] project: Option<String>,
-        #[arg(long)] due_before: Option<String>,
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        status: Option<String>,
+        #[arg(long)]
+        tag: Vec<String>,
+        #[arg(long)]
+        project: Option<String>,
+        #[arg(long)]
+        due_before: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
     /// Show a task with its full event timeline
     Show {
         id: String,
-        #[arg(long)] json: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Mark actionable (next)
     Next { id: String },
@@ -41,9 +55,12 @@ pub enum Command {
     /// Schedule with a planned start (and optional --rrule)
     Schedule {
         id: String,
-        #[arg(long)] start: Option<String>,
-        #[arg(long)] end: Option<String>,
-        #[arg(long)] rrule: Option<String>,
+        #[arg(long)]
+        start: Option<String>,
+        #[arg(long)]
+        end: Option<String>,
+        #[arg(long)]
+        rrule: Option<String>,
     },
     /// Move to someday/maybe
     Someday { id: String },
@@ -60,7 +77,8 @@ pub enum Command {
     /// Create a project
     Project {
         name: String,
-        #[arg(long)] tag: Vec<String>,
+        #[arg(long)]
+        tag: Vec<String>,
     },
     /// Show projects and their actions as a tree
     Tree,

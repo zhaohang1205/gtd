@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
@@ -73,14 +73,12 @@ impl FromStr for TaskKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ProjectType {
     #[default]
     Parallel,
     Sequential,
 }
-
 
 impl fmt::Display for ProjectType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -110,8 +108,6 @@ pub struct ChecklistItem {
     pub title: String,
     pub done: bool,
 }
-
-
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Task {

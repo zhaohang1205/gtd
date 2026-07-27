@@ -6,7 +6,8 @@ use anyhow::Result;
 
 pub fn to_status(conn: &Connection, id: &str, to: &str) -> Result<()> {
     let id = tasks::resolve_id(conn, id)?;
-    let parsed_status: crate::model::task::Status = to.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
+    let parsed_status: crate::model::task::Status =
+        to.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
     let t = tasks::transition(conn, &id, parsed_status)?;
     println!("{} -> {}", &t.id[..8], t.status);
     if to == "next" {
@@ -20,7 +21,10 @@ pub fn to_status(conn: &Connection, id: &str, to: &str) -> Result<()> {
             if missing_time {
                 parts.push("时间");
             }
-            println!("  tip: 建议补充{} — `gtp tag <id> <项目>` / `gtp schedule <id> --start <时间>`", parts.join("/"));
+            println!(
+                "  tip: 建议补充{} — `gtp tag <id> <项目>` / `gtp schedule <id> --start <时间>`",
+                parts.join("/")
+            );
         }
     }
     Ok(())
@@ -43,7 +47,11 @@ pub fn schedule(
         None => None,
     };
     let t = tasks::schedule(conn, &id, start_ms, end_ms, rrule.map(|s| s.to_string()))?;
-    println!("scheduled {} at {}", &t.id[..8], time::format_local(Some(start_ms)));
+    println!(
+        "scheduled {} at {}",
+        &t.id[..8],
+        time::format_local(Some(start_ms))
+    );
     if let Some(rr) = &t.rrule {
         println!("  rrule: {}", rr);
     }

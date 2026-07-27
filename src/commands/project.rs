@@ -70,11 +70,26 @@ pub fn review(conn: &Connection) -> Result<()> {
             query: None,
         },
     )?;
-    let inbox = all.iter().filter(|t| t.status == crate::model::task::Status::Inbox).count();
-    let next = all.iter().filter(|t| t.status == crate::model::task::Status::Next).count();
-    let waiting = all.iter().filter(|t| t.status == crate::model::task::Status::Waiting).count();
-    let someday = all.iter().filter(|t| t.status == crate::model::task::Status::Someday).count();
-    let scheduled = all.iter().filter(|t| t.status == crate::model::task::Status::Scheduled).count();
+    let inbox = all
+        .iter()
+        .filter(|t| t.status == crate::model::task::Status::Inbox)
+        .count();
+    let next = all
+        .iter()
+        .filter(|t| t.status == crate::model::task::Status::Next)
+        .count();
+    let waiting = all
+        .iter()
+        .filter(|t| t.status == crate::model::task::Status::Waiting)
+        .count();
+    let someday = all
+        .iter()
+        .filter(|t| t.status == crate::model::task::Status::Someday)
+        .count();
+    let scheduled = all
+        .iter()
+        .filter(|t| t.status == crate::model::task::Status::Scheduled)
+        .count();
 
     let now = time::now_ms();
     let horizon = 3 * 24 * 3600 * 1000i64;

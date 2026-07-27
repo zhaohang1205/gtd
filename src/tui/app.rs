@@ -1,27 +1,26 @@
-
 use anyhow::Result;
 use ratatui::widgets::ListState;
 use rusqlite::Connection;
 
+use super::row_from;
 use crate::model::event::TaskEvent;
 use crate::model::tag::Tag;
 use crate::model::task::{self, Task};
-use crate::repo::tasks::{self, ListFilter};
 use crate::repo::tags;
-use super::row_from;
+use crate::repo::tasks::{self, ListFilter};
 
 use super::calendar;
 
-
-
 pub(crate) fn visual_len(s: &str) -> usize {
-    s.chars().map(|c| {
-        if c.is_ascii() || ('\u{E000}'..='\u{F8FF}').contains(&c) {
-            1
-        } else {
-            2
-        }
-    }).sum()
+    s.chars()
+        .map(|c| {
+            if c.is_ascii() || ('\u{E000}'..='\u{F8FF}').contains(&c) {
+                1
+            } else {
+                2
+            }
+        })
+        .sum()
 }
 
 pub(crate) fn pad_right(s: &str, width: usize) -> String {
@@ -97,7 +96,6 @@ impl View {
             _ => None,
         }
     }
-
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -147,7 +145,8 @@ pub(crate) enum Pane {
 }
 
 #[derive(Clone)]
-pub(crate) struct Row {    pub(crate) id: String,
+pub(crate) struct Row {
+    pub(crate) id: String,
     pub(crate) title: String,
     pub(crate) status: String,
     pub(crate) due: Option<i64>,
@@ -159,12 +158,14 @@ pub(crate) struct Row {    pub(crate) id: String,
     pub(crate) total: Option<usize>,
 }
 
-pub(crate) struct DetailData {    pub(crate) task: Task,
+pub(crate) struct DetailData {
+    pub(crate) task: Task,
     pub(crate) tags: Vec<Tag>,
     pub(crate) events: Vec<TaskEvent>,
 }
 
-pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
+pub(crate) struct App<'a> {
+    pub(crate) conn: &'a Connection,
     pub(crate) view: View,
     pub(crate) items: Vec<Row>,
     pub(crate) selected: usize,
@@ -236,17 +237,29 @@ impl<'a> App<'a> {
 
     pub(crate) fn switch_to_english_ime(&self) {
         // Try fcitx5-remote
-        if std::process::Command::new("fcitx5-remote").arg("-c").status().is_ok() {
+        if std::process::Command::new("fcitx5-remote")
+            .arg("-c")
+            .status()
+            .is_ok()
+        {
             return;
         }
         // Try fcitx-remote
-        if std::process::Command::new("fcitx-remote").arg("-c").status().is_ok() {
+        if std::process::Command::new("fcitx-remote")
+            .arg("-c")
+            .status()
+            .is_ok()
+        {
             return;
         }
         // Try ibus
-        let _ = std::process::Command::new("ibus").args(["engine", "xkb:us::eng"]).status();
+        let _ = std::process::Command::new("ibus")
+            .args(["engine", "xkb:us::eng"])
+            .status();
         // Try im-select (macOS / Windows / Cross-platform helper if installed)
-        let _ = std::process::Command::new("im-select").arg("com.apple.keylayout.ABC").status();
+        let _ = std::process::Command::new("im-select")
+            .arg("com.apple.keylayout.ABC")
+            .status();
         let _ = std::process::Command::new("im-select").arg("1033").status();
     }
 
@@ -272,7 +285,11 @@ impl<'a> App<'a> {
                 status: None,
                 project: None,
                 tags: vec![],
-                query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                query: if self.search_query.is_empty() {
+                    None
+                } else {
+                    Some(self.search_query.clone())
+                },
             },
         )
         .unwrap_or(0)
@@ -280,7 +297,9 @@ impl<'a> App<'a> {
 
     pub(crate) fn context_count(&self, v: View) -> usize {
         match v {
-            View::Archived => tasks::list_archived(self.conn).map(|t| t.len()).unwrap_or(0),
+            View::Archived => tasks::list_archived(self.conn)
+                .map(|t| t.len())
+                .unwrap_or(0),
             View::Tags => tags::list_tags(self.conn).map(|t| t.len()).unwrap_or(0),
             _ => match v.status() {
                 Some(s) => tasks::count(
@@ -289,7 +308,11 @@ impl<'a> App<'a> {
                         status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                         project: None,
                         tags: vec![],
-                        query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                        query: if self.search_query.is_empty() {
+                            None
+                        } else {
+                            Some(self.search_query.clone())
+                        },
                     },
                 )
                 .unwrap_or(0),
@@ -308,7 +331,11 @@ impl<'a> App<'a> {
                         status: None,
                         project: None,
                         tags: vec![],
-                        query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                        query: if self.search_query.is_empty() {
+                            None
+                        } else {
+                            Some(self.search_query.clone())
+                        },
                     },
                 )?
                 .into_iter()
@@ -322,7 +349,11 @@ impl<'a> App<'a> {
                             status: None,
                             project: Some(p.id.clone()),
                             tags: vec![],
-                            query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                            query: if self.search_query.is_empty() {
+                                None
+                            } else {
+                                Some(self.search_query.clone())
+                            },
                         },
                     )?;
                     for a in actions {
@@ -357,14 +388,18 @@ impl<'a> App<'a> {
                     if let Some(ref tf) = self.tag_filter {
                         tags.push(tf.clone());
                     }
-                    
+
                     let ts = tasks::list(
                         self.conn,
                         &ListFilter {
                             status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
                             project: None,
                             tags,
-                            query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+                            query: if self.search_query.is_empty() {
+                                None
+                            } else {
+                                Some(self.search_query.clone())
+                            },
                         },
                     )?;
                     for t in ts {
@@ -424,8 +459,6 @@ impl<'a> App<'a> {
         }
         self.load_detail();
     }
-
-
 
     pub(crate) fn next_view(&mut self, delta: isize) {
         let views = [
@@ -516,7 +549,12 @@ impl<'a> App<'a> {
                 }
                 // 如果当前变动状态的任务正处于 Pomodoro 专注中，且新状态为 Done/Waiting，终止番茄钟
                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
-                    if pomo.task_id.as_deref() == Some(id) && matches!(to, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                    if pomo.task_id.as_deref() == Some(id)
+                        && matches!(
+                            to,
+                            task::Status::Done | task::Status::Waiting | task::Status::Someday
+                        )
+                    {
                         let _ = crate::commands::pomo::stop();
                     }
                 }
@@ -530,7 +568,14 @@ impl<'a> App<'a> {
                     if task.status != to && tasks::transition(self.conn, id, to).is_ok() {
                         count += 1;
                         if let Ok(pomo) = crate::repo::pomodoro::get_state() {
-                            if pomo.task_id.as_deref() == Some(id) && matches!(to, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                            if pomo.task_id.as_deref() == Some(id)
+                                && matches!(
+                                    to,
+                                    task::Status::Done
+                                        | task::Status::Waiting
+                                        | task::Status::Someday
+                                )
+                            {
                                 let _ = crate::commands::pomo::stop();
                             }
                         }
@@ -550,5 +595,4 @@ impl<'a> App<'a> {
         self.load_detail();
         Ok(())
     }
-
 }

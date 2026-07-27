@@ -1,10 +1,10 @@
 use rusqlite::Connection;
 
-use anyhow::Result;
 use crate::error::Error;
 use crate::model::tag::Tag;
 use crate::repo::log_event;
 use crate::time;
+use anyhow::Result;
 
 pub fn list_tags(conn: &Connection) -> Result<Vec<Tag>> {
     let mut stmt = conn.prepare(
@@ -53,7 +53,11 @@ pub fn add_tag_to_task(conn: &Connection, task_id: &str, tag_name: &str) -> Resu
     Ok(())
 }
 
-pub(crate) fn add_tag_to_task_inner(conn: &Connection, task_id: &str, tag_name: &str) -> Result<()> {
+pub(crate) fn add_tag_to_task_inner(
+    conn: &Connection,
+    task_id: &str,
+    tag_name: &str,
+) -> Result<()> {
     let tag_id = find_or_create_tag(conn, tag_name)?;
     let exists: i64 = conn.query_row(
         "SELECT COUNT(*) FROM task_tags WHERE task_id = ?1 AND tag_id = ?2",
@@ -82,8 +86,8 @@ pub(crate) fn add_tag_to_task_inner(conn: &Connection, task_id: &str, tag_name: 
 
 pub fn remove_tag_from_task(conn: &Connection, task_id: &str, tag_name: &str) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    let tag = get_tag_by_name(&tx, tag_name)?
-        .ok_or_else(|| Error::TagNotFound(tag_name.to_string()))?;
+    let tag =
+        get_tag_by_name(&tx, tag_name)?.ok_or_else(|| Error::TagNotFound(tag_name.to_string()))?;
     let deleted = tx.execute(
         "DELETE FROM task_tags WHERE task_id = ?1 AND tag_id = ?2",
         rusqlite::params![task_id, tag.id],
@@ -132,7 +136,10 @@ pub fn delete_tag(conn: &Connection, tag_name: &str) -> Result<()> {
             );
         }
 
-        tx.execute("DELETE FROM task_tags WHERE tag_id = ?1", rusqlite::params![tag.id])?;
+        tx.execute(
+            "DELETE FROM task_tags WHERE tag_id = ?1",
+            rusqlite::params![tag.id],
+        )?;
         tx.execute("DELETE FROM tags WHERE id = ?1", rusqlite::params![tag.id])?;
         tx.commit()?;
     }

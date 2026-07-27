@@ -1,26 +1,28 @@
 pub mod app;
+pub mod calendar;
 pub mod handlers;
 pub mod render;
 pub mod ui;
-pub mod calendar;
 
 pub(crate) use app::{App, Pane, View};
 pub(crate) use handlers::AppHandlers;
 pub(crate) use render::AppRender;
 
-use anyhow::Result;
-use crossterm::event::{self, Event, KeyEventKind};
-use crossterm::terminal::{enable_raw_mode, disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::execute;
-use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io::{self, Stdout};
-use std::time::Duration;
 use crate::model::task::{self, Task};
 use crate::repo::tags;
 use crate::repo::tasks;
 use crate::repo::tasks::ListFilter;
-use rusqlite::Connection;
+use anyhow::Result;
 use app::Row;
+use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::execute;
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use rusqlite::Connection;
+use std::io::{self, Stdout};
+use std::time::Duration;
 
 /// 状态的中文含义，用于引导栏的“状态地图”。
 pub(crate) fn status_cn(s: task::Status) -> &'static str {
@@ -70,7 +72,10 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
             },
         )?;
         let total = children.len();
-        let done = children.iter().filter(|c| c.status == task::Status::Done).count();
+        let done = children
+            .iter()
+            .filter(|c| c.status == task::Status::Done)
+            .count();
         if total == 0 {
             (None, None)
         } else {
@@ -100,14 +105,22 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
 pub fn run(conn: &Connection) -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = run_app(&mut terminal, conn);
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, crossterm::event::DisableMouseCapture)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     result
 }
@@ -146,7 +159,9 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
                                 app.move_sel(-1);
                             }
                         }
-                        crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+                        crossterm::event::MouseEventKind::Down(
+                            crossterm::event::MouseButton::Left,
+                        ) => {
                             if m.column > terminal.size()?.width / 2 {
                                 app.pane = Pane::Right;
                             } else if is_left_panel {
@@ -172,21 +187,18 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
 mod tests {
     use super::*;
     use crate::db::migrate;
+    use crate::repo::tasks::ListFilter;
     use crate::repo::tasks::{self, CaptureInput};
+    use crate::tui::app::Mode;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use ratatui::backend::TestBackend;
     use std::io::Write;
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    use crate::tui::app::Mode;
-    use crate::repo::tasks::ListFilter;
 
     fn key(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::empty())
     }
     fn kc(k: KeyCode) -> KeyEvent {
         KeyEvent::new(k, KeyModifiers::empty())
-    }
-    fn ctr(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
     fn seed(conn: &Connection) {
@@ -203,7 +215,11 @@ mod tests {
             },
         )
         .unwrap();
-        let mk = |title: &str, kind: task::TaskKind, parent: Option<&str>, status: task::Status, tags: &[&str]| {
+        let mk = |title: &str,
+                  kind: task::TaskKind,
+                  parent: Option<&str>,
+                  status: task::Status,
+                  tags: &[&str]| {
             tasks::create_capture(
                 conn,
                 &CaptureInput {
@@ -218,12 +234,48 @@ mod tests {
             )
             .unwrap();
         };
-        mk("Write homepage copy", task::TaskKind::Action, Some(&proj.id), task::Status::Inbox, &["work", "p1"]);
-        mk("Buy groceries", task::TaskKind::Action, None, task::Status::Inbox, &["home", "errands"]);
-        mk("Read Rust book", task::TaskKind::Action, None, task::Status::Next, &["learning"]);
-        mk("Pay taxes", task::TaskKind::Action, None, task::Status::Waiting, &["work", "p2"]);
-        mk("Plan vacation", task::TaskKind::Action, None, task::Status::Someday, &["home"]);
-        mk("Finish report", task::TaskKind::Action, None, task::Status::Done, &[]);
+        mk(
+            "Write homepage copy",
+            task::TaskKind::Action,
+            Some(&proj.id),
+            task::Status::Inbox,
+            &["work", "p1"],
+        );
+        mk(
+            "Buy groceries",
+            task::TaskKind::Action,
+            None,
+            task::Status::Inbox,
+            &["home", "errands"],
+        );
+        mk(
+            "Read Rust book",
+            task::TaskKind::Action,
+            None,
+            task::Status::Next,
+            &["learning"],
+        );
+        mk(
+            "Pay taxes",
+            task::TaskKind::Action,
+            None,
+            task::Status::Waiting,
+            &["work", "p2"],
+        );
+        mk(
+            "Plan vacation",
+            task::TaskKind::Action,
+            None,
+            task::Status::Someday,
+            &["home"],
+        );
+        mk(
+            "Finish report",
+            task::TaskKind::Action,
+            None,
+            task::Status::Done,
+            &[],
+        );
     }
 
     fn snap(term: &Terminal<TestBackend>) -> String {
@@ -243,10 +295,6 @@ mod tests {
 
     /// 去掉所有空格，规避无头快照里 CJK 字符被逐字加空格的渲染产物，
     /// 便于对中文文本做 contains 断言（真实终端无此问题）。
-    pub(crate) fn visual_len(s: &str) -> usize {
-        s.chars().filter(|c| *c != ' ').collect::<String>().len()
-    }
-    
     fn norm(s: &str) -> String {
         s.chars().filter(|c| *c != ' ').collect()
     }
@@ -259,7 +307,11 @@ mod tests {
         let mut app = App::new(&conn).unwrap();
         let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
         let mut out = std::fs::File::create("/tmp/gtp_tui_frames.txt").unwrap();
-        let frame = |label: &str, term: &mut Terminal<TestBackend>, app: &mut App, out: &mut std::fs::File| -> String {
+        let frame = |label: &str,
+                     term: &mut Terminal<TestBackend>,
+                     app: &mut App,
+                     out: &mut std::fs::File|
+         -> String {
             term.clear().unwrap();
             term.draw(|f| app.render(f)).unwrap();
             let s = snap(term);
@@ -275,7 +327,10 @@ mod tests {
         assert!(s.contains("Tasks·Inbox"), "中栏列表标题");
         assert!(s.contains("任务详情"), "右侧详情栏");
         assert!(s.contains("Buygroceries"), "inbox 列出已灌入的任务");
-        assert!(s.contains("等待中") && s.contains("将来/也许"), "上下文分组已列出");
+        assert!(
+            s.contains("等待中") && s.contains("将来/也许"),
+            "上下文分组已列出"
+        );
 
         // 2) vim 导航：下、上
         app.handle_key(key('j')).unwrap();
@@ -406,7 +461,7 @@ mod tests {
         app.handle_key(key('v')).unwrap();
         assert!(app.mode == Mode::Visual, "进入可视模式");
         app.handle_key(key('j')).unwrap(); // Move down to select two items
-        assert!(app.selected_ids.len() >= 1, "选中了多个任务");
+        assert!(!app.selected_ids.is_empty(), "选中了多个任务");
         // Tag them in bulk
         app.handle_key(key('t')).unwrap();
         assert!(app.mode == Mode::Tagging);
@@ -437,7 +492,7 @@ mod tests {
         assert_eq!(app.view, View::Inbox);
         let s = norm(&frame("10-review-step1", &mut term, &mut app, &mut out));
         assert!(s.contains("每周回顾"));
-        
+
         app.handle_key(key('R')).unwrap(); // Step 2
         assert_eq!(app.review_step, 2);
         assert_eq!(app.view, View::Projects);
@@ -463,7 +518,10 @@ mod tests {
         let mut out = std::fs::File::create("/tmp/gtp_empty_guide.txt").unwrap();
         out.write_all(raw.as_bytes()).unwrap();
         let s = norm(&raw);
-        assert!(s.contains("欢迎使用gtp"), "empty db should show welcome guide");
+        assert!(
+            s.contains("欢迎使用gtp"),
+            "empty db should show welcome guide"
+        );
         assert!(s.contains("Active"), "guide shows groups");
     }
 }

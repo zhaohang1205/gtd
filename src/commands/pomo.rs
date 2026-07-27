@@ -1,14 +1,16 @@
+use crate::model::{event, pomodoro::Phase};
+use crate::repo::{pomodoro, tasks};
+use crate::time;
 use anyhow::Result;
 use rusqlite::Connection;
 use std::process::Command as StdCommand;
 use std::thread;
 use std::time::Duration;
-use crate::model::{event, pomodoro::Phase};
-use crate::repo::{pomodoro, tasks};
-use crate::time;
 
 fn kill_daemon() {
-    let _ = StdCommand::new("pkill").args(["-f", "gtp pomo daemon"]).status();
+    let _ = StdCommand::new("pkill")
+        .args(["-f", "gtp pomo daemon"])
+        .status();
     // 等待旧进程实际退出，防止新旧 daemon 同时写 pomo.json 导致文件损坏
     thread::sleep(Duration::from_millis(200));
 }
@@ -19,7 +21,7 @@ pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
     let mut state = pomodoro::get_state()?;
     let now = time::now_ms();
     let duration_ms = (state.config.work_mins as i64) * 60 * 1000;
-    
+
     state.phase = Phase::Work;
     state.task_id = Some(task.id.clone());
     state.task_title = Some(task.title.clone());
@@ -28,11 +30,15 @@ pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
     pomodoro::save_state(&state)?;
 
     let exe_path = std::env::current_exe().unwrap_or_else(|_| "gtp".into());
-    StdCommand::new(exe_path)
-        .args(["pomo", "daemon"])
-        .spawn()?;
-        
-    notify("🎯 专注模式开启", &format!("开始专注任务: {}\n预计时长: {} 分钟", task.title, state.config.work_mins));
+    StdCommand::new(exe_path).args(["pomo", "daemon"]).spawn()?;
+
+    notify(
+        "🎯 专注模式开启",
+        &format!(
+            "开始专注任务: {}\n预计时长: {} 分钟",
+            task.title, state.config.work_mins
+        ),
+    );
     Ok(())
 }
 
@@ -55,13 +61,16 @@ pub fn stop() -> Result<()> {
 pub fn waybar() -> Result<()> {
     let state = pomodoro::get_state()?;
     if state.phase == Phase::Idle {
-        println!("{}", serde_json::json!({
-            "text": "",
-            "class": "idle"
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "text": "",
+                "class": "idle"
+            })
+        );
         return Ok(());
     }
-    
+
     let now = time::now_ms();
     let end_ts = state.end_ts.unwrap_or(now);
     let mut diff = (end_ts - now) / 1000;
@@ -77,12 +86,19 @@ pub fn waybar() -> Result<()> {
         Phase::LongBreak => "long_break",
         Phase::Idle => "idle",
     };
-    let tooltip = format!("{} - {:?}", state.task_title.as_deref().unwrap_or(""), state.phase);
-    println!("{}", serde_json::json!({
-        "text": text,
-        "class": class,
-        "tooltip": tooltip
-    }));
+    let tooltip = format!(
+        "{} - {:?}",
+        state.task_title.as_deref().unwrap_or(""),
+        state.phase
+    );
+    println!(
+        "{}",
+        serde_json::json!({
+            "text": text,
+            "class": class,
+            "tooltip": tooltip
+        })
+    );
     Ok(())
 }
 
@@ -94,10 +110,10 @@ pub fn daemon() -> Result<()> {
             thread::sleep(Duration::from_secs(1));
             continue;
         }
-        
+
         let now = time::now_ms();
         let end_ts = state.end_ts.unwrap_or(now);
-        
+
         if now >= end_ts {
             match state.phase {
                 Phase::Work => {
@@ -167,13 +183,16 @@ pub fn daemon() -> Result<()> {
                 }
                 Phase::ShortBreak | Phase::LongBreak => {
                     state.phase = Phase::Idle;
-                    notify("⏰ 休息结束！战报结清", "休息已完成！按 [Space / P] 再接再厉开启新一轮，或按 [S] 结束专注。💪");
+                    notify(
+                        "⏰ 休息结束！战报结清",
+                        "休息已完成！按 [Space / P] 再接再厉开启新一轮，或按 [S] 结束专注。💪",
+                    );
                 }
                 Phase::Idle => {}
             }
             let _ = pomodoro::save_state(&state);
         }
-        
+
         thread::sleep(Duration::from_secs(1));
     }
 }
@@ -207,10 +226,26 @@ fn notify(summary: &str, body: &str) {
     thread::spawn(move || {
         let mut played = false;
         for path in &playable {
-            if StdCommand::new("paplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
-                || StdCommand::new("pw-play").arg(path).status().map(|s| s.success()).unwrap_or(false)
-                || StdCommand::new("aplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
-                || StdCommand::new("mpv").args(["--no-terminal", path]).status().map(|s| s.success()).unwrap_or(false)
+            if StdCommand::new("paplay")
+                .arg(path)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+                || StdCommand::new("pw-play")
+                    .arg(path)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                || StdCommand::new("aplay")
+                    .arg(path)
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
+                || StdCommand::new("mpv")
+                    .args(["--no-terminal", path])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false)
             {
                 played = true;
                 break;

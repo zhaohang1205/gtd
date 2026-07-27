@@ -4,8 +4,8 @@ use ratatui::{
     widgets::ListItem,
 };
 
-use crate::tui::App;
 use crate::tui::app::Mode;
+use crate::tui::App;
 
 use crate::model::task::Status;
 use crate::time;
@@ -55,9 +55,13 @@ fn progress_text(done: Option<usize>, total: Option<usize>) -> String {
 }
 
 pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
-    let active_pomo_task_id = crate::repo::pomodoro::get_state()
-        .ok()
-        .and_then(|s| if s.phase != crate::model::pomodoro::Phase::Idle { s.task_id } else { None });
+    let active_pomo_task_id = crate::repo::pomodoro::get_state().ok().and_then(|s| {
+        if s.phase != crate::model::pomodoro::Phase::Idle {
+            s.task_id
+        } else {
+            None
+        }
+    });
 
     app.items
         .iter()
@@ -89,12 +93,26 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
 
             let mut spans = vec![Span::styled(
                 format!("{}{}{} ", sel_prefix, indent, letter),
-                Style::default().fg(if is_focus_task { Color::LightRed } else if is_selected { Color::Yellow } else { color }).add_modifier(if is_focus_task { Modifier::BOLD } else { Modifier::empty() }),
+                Style::default()
+                    .fg(if is_focus_task {
+                        Color::LightRed
+                    } else if is_selected {
+                        Color::Yellow
+                    } else {
+                        color
+                    })
+                    .add_modifier(if is_focus_task {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
             )];
 
             // 标题（选中时加粗，专注任务特殊高亮）
             let title_style = if is_focus_task {
-                Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::LightRed)
+                    .add_modifier(Modifier::BOLD)
             } else if is_selected {
                 Style::default().add_modifier(Modifier::BOLD)
             } else {
@@ -129,11 +147,13 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
             if !due_text.is_empty() {
                 spans.push(Span::styled(
                     format!("  {}", due_text),
-                    Style::default().fg(due_color).add_modifier(if due_color == Color::Red {
-                        Modifier::BOLD
-                    } else {
-                        Modifier::empty()
-                    }),
+                    Style::default()
+                        .fg(due_color)
+                        .add_modifier(if due_color == Color::Red {
+                            Modifier::BOLD
+                        } else {
+                            Modifier::empty()
+                        }),
                 ));
             }
 

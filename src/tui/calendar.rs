@@ -1,4 +1,4 @@
-use chrono::{Datelike, Days, NaiveDate, Local};
+use chrono::{Datelike, Days, Local, NaiveDate};
 use ratatui::{
     layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
@@ -21,7 +21,10 @@ impl CalendarState {
         }
     }
 
-    pub fn handle_key(&mut self, code: crossterm::event::KeyCode) -> Option<Option<(NaiveDate, NaiveDate)>> {
+    pub fn handle_key(
+        &mut self,
+        code: crossterm::event::KeyCode,
+    ) -> Option<Option<(NaiveDate, NaiveDate)>> {
         use crossterm::event::KeyCode;
         match code {
             KeyCode::Char('h') | KeyCode::Left => {
@@ -63,7 +66,11 @@ impl CalendarState {
             KeyCode::Enter => {
                 if let Some(start) = self.start_date {
                     let end = self.cursor;
-                    let (s, e) = if start <= end { (start, end) } else { (end, start) };
+                    let (s, e) = if start <= end {
+                        (start, end)
+                    } else {
+                        (end, start)
+                    };
                     return Some(Some((s, e)));
                 } else {
                     self.start_date = Some(self.cursor);
@@ -85,16 +92,22 @@ impl CalendarState {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
-            .title(format!(" {}年 {}月 ", self.cursor.year(), self.cursor.month()));
+            .title(format!(
+                " {}年 {}月 ",
+                self.cursor.year(),
+                self.cursor.month()
+            ));
 
         f.render_widget(Clear, area);
 
         let mut rows = vec![];
-        rows.push(Row::new(vec![
-            "日", "一", "二", "三", "四", "五", "六",
-        ]).style(Style::default().fg(Color::DarkGray)));
+        rows.push(
+            Row::new(vec!["日", "一", "二", "三", "四", "五", "六"])
+                .style(Style::default().fg(Color::DarkGray)),
+        );
 
-        let first_day = NaiveDate::from_ymd_opt(self.cursor.year(), self.cursor.month(), 1).unwrap();
+        let first_day =
+            NaiveDate::from_ymd_opt(self.cursor.year(), self.cursor.month(), 1).unwrap();
         let weekday = first_day.weekday().num_days_from_sunday();
 
         let days_in_month = if self.cursor.month() == 12 {
@@ -110,22 +123,30 @@ impl CalendarState {
         let mut day_of_week = weekday as usize;
 
         for d in 1..=days_in_month {
-            let date = NaiveDate::from_ymd_opt(self.cursor.year(), self.cursor.month(), d as u32).unwrap();
+            let date =
+                NaiveDate::from_ymd_opt(self.cursor.year(), self.cursor.month(), d as u32).unwrap();
             let mut style = Style::default();
-            
+
             let is_cursor = date == self.cursor;
             let mut is_in_range = false;
-            
+
             if let Some(start) = self.start_date {
                 let end = self.cursor;
-                let (min, max) = if start <= end { (start, end) } else { (end, start) };
+                let (min, max) = if start <= end {
+                    (start, end)
+                } else {
+                    (end, start)
+                };
                 if date >= min && date <= max {
                     is_in_range = true;
                 }
             }
 
             if is_cursor {
-                style = style.bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD);
+                style = style
+                    .bg(Color::Cyan)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD);
             } else if is_in_range {
                 style = style.bg(Color::DarkGray).fg(Color::White);
             }
@@ -139,16 +160,21 @@ impl CalendarState {
                 day_of_week = 0;
             }
         }
-        
+
         if day_of_week > 0 {
             rows.push(Row::new(current_row));
         }
 
         let widths = [
-            Constraint::Length(3), Constraint::Length(3), Constraint::Length(3),
-            Constraint::Length(3), Constraint::Length(3), Constraint::Length(3), Constraint::Length(3)
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
         ];
-        
+
         let table = Table::new(rows, widths).block(block).column_spacing(1);
         f.render_widget(table, area);
 
@@ -157,7 +183,15 @@ impl CalendarState {
         } else {
             " 回车:选择结束日期 | Esc:重选 "
         };
-        let hint_area = Rect::new(area.x + 2, area.y + area.height.saturating_sub(1), area.width.saturating_sub(4), 1);
-        f.render_widget(Paragraph::new(Span::styled(hint, Style::default().fg(Color::Cyan))), hint_area);
+        let hint_area = Rect::new(
+            area.x + 2,
+            area.y + area.height.saturating_sub(1),
+            area.width.saturating_sub(4),
+            1,
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(hint, Style::default().fg(Color::Cyan))),
+            hint_area,
+        );
     }
 }

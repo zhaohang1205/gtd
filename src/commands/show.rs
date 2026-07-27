@@ -45,7 +45,10 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
     if let Some(rr) = &task.rrule {
         println!("  rrule     : {}", rr);
     }
-    println!("  captured  : {}", time::format_local(Some(task.created_at)));
+    println!(
+        "  captured  : {}",
+        time::format_local(Some(task.created_at))
+    );
     println!("  clarified : {}", time::format_local(task.clarified_at));
     println!("  organized : {}", time::format_local(task.organized_at));
     println!("  due       : {}", time::format_local(task.due_at));

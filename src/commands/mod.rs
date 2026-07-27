@@ -6,8 +6,8 @@ use anyhow::Result;
 
 mod capture;
 mod list;
-mod project;
 pub mod pomo;
+mod project;
 mod show;
 mod status;
 mod tagging;
@@ -62,7 +62,13 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
             start,
             end,
             rrule,
-        } => status::schedule(conn, &id, start.as_deref(), end.as_deref(), rrule.as_deref()),
+        } => status::schedule(
+            conn,
+            &id,
+            start.as_deref(),
+            end.as_deref(),
+            rrule.as_deref(),
+        ),
         Command::Archive { id } => status::archive(conn, &id),
         Command::Restore { id } => status::restore(conn, &id),
         Command::Tag { id, name } => tagging::add(conn, &id, &name),

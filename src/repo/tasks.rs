@@ -1,13 +1,13 @@
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use anyhow::Result;
-use chrono::TimeZone;
 use crate::error::Error;
 use crate::model::event;
 use crate::model::task::{self, Task};
 use crate::repo::log_event;
 use crate::time;
+use anyhow::Result;
+use chrono::TimeZone;
 
 /// Input for creating a task (capture / project).
 pub struct CaptureInput {
@@ -66,7 +66,10 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
         None
     };
 
-    let pt_str = input.project_type.unwrap_or(task::ProjectType::Parallel).to_string();
+    let pt_str = input
+        .project_type
+        .unwrap_or(task::ProjectType::Parallel)
+        .to_string();
     let cl_str = serde_json::to_string(&input.checklist).unwrap_or_else(|_| "[]".to_string());
 
     let tx = conn.unchecked_transaction()?;
@@ -141,7 +144,11 @@ pub fn update_notes(conn: &Connection, id: &str, new_notes: &str) -> Result<Task
     get(conn, id)
 }
 
-pub fn update_checklist(conn: &Connection, id: &str, checklist: &Vec<task::ChecklistItem>) -> Result<Task> {
+pub fn update_checklist(
+    conn: &Connection,
+    id: &str,
+    checklist: &Vec<task::ChecklistItem>,
+) -> Result<Task> {
     let now = time::now_ms();
     let cl_str = serde_json::to_string(checklist).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
@@ -168,7 +175,11 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
         t.clarified_at = Some(now);
     }
 
-    if t.kind == task::TaskKind::Project && t.started_at.is_none() && to_status != task::Status::Inbox && to_status != task::Status::Someday {
+    if t.kind == task::TaskKind::Project
+        && t.started_at.is_none()
+        && to_status != task::Status::Inbox
+        && to_status != task::Status::Someday
+    {
         t.started_at = Some(now);
     }
 
@@ -179,14 +190,21 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
             if let Ok(occ) = time::rrule_occurrences(rrule, start, 366) {
                 if let Some(next) = occ.into_iter().find(|m| *m > start) {
                     let duration = t.scheduled_end_at.unwrap_or(start) - start;
-                    
-                    log_event(&tx, id, event::EV_HABIT_COMPLETED, Some(&from.to_string()), Some(&task::Status::Done.to_string()), None)?;
+
+                    log_event(
+                        &tx,
+                        id,
+                        event::EV_HABIT_COMPLETED,
+                        Some(&from.to_string()),
+                        Some(&task::Status::Done.to_string()),
+                        None,
+                    )?;
 
                     t.scheduled_start_at = Some(next);
                     t.scheduled_end_at = Some(next + duration);
                     t.status = task::Status::Scheduled;
                     t.updated_at = now;
-                    
+
                     tx.execute(
                         "UPDATE tasks SET status=?1, clarified_at=?2, completed_at=?3, updated_at=?4, started_at=?5, scheduled_start_at=?6, scheduled_end_at=?7 WHERE id=?8",
                         rusqlite::params![t.status.to_string(), t.clarified_at, t.completed_at, t.updated_at, t.started_at, t.scheduled_start_at, t.scheduled_end_at, id],
@@ -294,11 +312,7 @@ pub fn set_delegated(conn: &Connection, id: &str, who: Option<String>) -> Result
 }
 
 /// Set a project's type (Parallel / Sequential).
-pub fn set_project_type(
-    conn: &Connection,
-    id: &str,
-    pt: task::ProjectType,
-) -> Result<Task> {
+pub fn set_project_type(conn: &Connection, id: &str, pt: task::ProjectType) -> Result<Task> {
     let mut t = get(conn, id)?;
     t.project_type = pt;
     t.updated_at = time::now_ms();
@@ -523,7 +537,8 @@ pub fn resolve_project(conn: &Connection, key: &str) -> Result<String> {
         }
     }
     // try by title
-    let mut stmt = conn.prepare("SELECT id FROM tasks WHERE kind='project' AND title = ?1 LIMIT 1")?;
+    let mut stmt =
+        conn.prepare("SELECT id FROM tasks WHERE kind='project' AND title = ?1 LIMIT 1")?;
     let mut rows = stmt.query_map([key], |r| r.get::<usize, String>(0))?;
     if let Some(id) = rows.next().transpose()? {
         return Ok(id);
@@ -565,9 +580,13 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         id: r.get(0)?,
         title: r.get(1)?,
         notes: r.get(2)?,
-        kind: kind_str.parse().unwrap_or(crate::model::task::TaskKind::Action),
+        kind: kind_str
+            .parse()
+            .unwrap_or(crate::model::task::TaskKind::Action),
         parent_id: r.get(4)?,
-        status: status_str.parse().unwrap_or(crate::model::task::Status::Inbox),
+        status: status_str
+            .parse()
+            .unwrap_or(crate::model::task::Status::Inbox),
         rrule: r.get(6)?,
         created_at: r.get(7)?,
         clarified_at: r.get(8)?,

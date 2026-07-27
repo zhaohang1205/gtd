@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Result};
 use chrono::{
-    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone,
-    Utc,
+    DateTime, Datelike, Duration, Local, LocalResult, NaiveDate, NaiveDateTime, NaiveTime,
+    TimeZone, Utc,
 };
 
 /// Current time as UTC milliseconds.
@@ -15,7 +15,10 @@ pub fn format_local(ms: Option<i64>) -> String {
     match ms {
         None => "-".to_string(),
         Some(ms) => match Utc.timestamp_millis_opt(ms).single() {
-            Some(dt) => dt.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string(),
+            Some(dt) => dt
+                .with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string(),
             None => ms.to_string(),
         },
     }
@@ -91,7 +94,12 @@ pub fn parse_time(s: &str) -> Result<i64> {
             'm' => Duration::minutes(num),
             'd' => Duration::days(num),
             'w' => Duration::weeks(num),
-            _ => return Err(anyhow!("unsupported relative unit '{}' (use h/m/d/w)", unit)),
+            _ => {
+                return Err(anyhow!(
+                    "unsupported relative unit '{}' (use h/m/d/w)",
+                    unit
+                ))
+            }
         };
         return Ok((now + dur).with_timezone(&Utc).timestamp_millis());
     }
@@ -198,12 +206,12 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
     let mut out = Vec::new();
     let mut cur = anchor;
     let max_iter = (count as usize).min(limit);
-    
+
     use chrono::Datelike;
     if freq == "WEEKLY" && !byday.is_empty() {
         let mut occurrences_found = 0;
         let mut current_day = cur;
-        
+
         // Always include the anchor if it's the very first explicitly scheduled occurrence,
         // but it's more standard to only include days that match BYDAY.
         // We'll iterate up to max_iter occurrences matching BYDAY.
@@ -211,7 +219,9 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
             if byday.contains(&current_day.weekday()) {
                 let ms = current_day.timestamp_millis();
                 if let Some(u) = until_ms {
-                    if ms > u { break; }
+                    if ms > u {
+                        break;
+                    }
                 }
                 out.push(ms);
                 occurrences_found += 1;
