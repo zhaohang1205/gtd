@@ -35,7 +35,7 @@ impl<'a> AppHandlers for App<'a> {
                 }
                 _ => {
                     // Default to close on any key
-                    if let crate::tui::app::Popup::TaskDueNow(id, title) = popup {
+                    if let crate::tui::app::Popup::TaskDueNow(_, _) = popup {
                         if key.code != KeyCode::Esc {
                             // If they typed something else, maybe restore the popup? Let's just close on anything for now.
                         }
