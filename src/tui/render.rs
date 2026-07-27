@@ -759,7 +759,7 @@ impl<'a> AppRender for App<'a> {
                     View::Projects => ("", "项目树"),
                     View::Review => ("", "周回顾"),
                     View::Archived => ("", "归档箱"),
-                    View::Tags => ("🏷", "标签库"),
+                    View::Tags => ("", "标签库"),
                 };
                 let padded_label = pad_right(label, 10);
 
@@ -812,7 +812,7 @@ impl<'a> AppRender for App<'a> {
                 View::Projects => ("", "项目树"),
                 View::Review => ("", "周回顾"),
                 View::Archived => ("", "归档箱"),
-                View::Tags => ("🏷", "标签库"),
+                View::Tags => ("", "标签库"),
                 _ => ("", ""),
             };
             let padded_label = pad_right(label, 10);
