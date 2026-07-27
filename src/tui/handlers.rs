@@ -37,7 +37,7 @@ impl<'a> AppHandlers for App<'a> {
                     let _ = self.refresh();
                     self.load_detail();
                 } else if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.visual_start_idx = None;
                     self.selected_ids.clear();
                     self.status_message = "Exited visual mode".into();
@@ -53,12 +53,12 @@ impl<'a> AppHandlers for App<'a> {
             }
             KeyCode::Char('v') | KeyCode::Char('V') => {
                 if self.mode == Mode::Visual {
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.visual_start_idx = None;
                     self.selected_ids.clear();
                     self.status_message = "Exited visual mode".into();
                 } else {
-                    self.mode = Mode::Visual;
+                    self.set_mode(Mode::Visual);
                     self.visual_start_idx = Some(self.selected);
                     self.update_visual_selection();
                     self.status_message = "-- VISUAL --".into();
@@ -101,8 +101,7 @@ impl<'a> AppHandlers for App<'a> {
                 }
             }
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let _ = crate::commands::pomo::stop();
-                self.status_message = "pomodoro stopped".into();
+                self.show_syntax = !self.show_syntax;
             }
             KeyCode::Char('p') => self.set_view(View::Projects),
             KeyCode::Char('r') => {
@@ -127,12 +126,17 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             KeyCode::Char('a') => {
-                self.mode = Mode::Capturing;
-                self.input.clear();
+                if self.view == View::Tags {
+                    self.set_mode(Mode::CreatingTag);
+                    self.input.clear();
+                } else {
+                    self.set_mode(Mode::Capturing);
+                    self.input.clear();
+                }
             }
             KeyCode::Char('e') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
-                    self.mode = Mode::EditingTitle;
+                    self.set_mode(Mode::EditingTitle);
                     self.input = row.title.clone();
                 }
             }
@@ -162,25 +166,28 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             }
-            KeyCode::Char('x') => self.act_on_selected(task::Status::Done)?,
+            KeyCode::Char('x') => {
+                self.act_on_selected(task::Status::Done)?;
+                self.move_sel(1);
+            }
             KeyCode::Char('w') => {
-                self.mode = Mode::WaitingWho;
+                self.set_mode(Mode::WaitingWho);
                 self.input.clear();
             }
             KeyCode::Char('s') => self.act_on_selected(task::Status::Someday)?,
             KeyCode::Char('c') => {
-                self.mode = Mode::SchedulingCalendar;
+                self.set_mode(Mode::SchedulingCalendar);
                 self.calendar = calendar::CalendarState::new();
                 self.input.clear();
             }
             KeyCode::Char('t') => {
-                self.mode = Mode::Tagging;
+                self.set_mode(Mode::Tagging);
                 self.input.clear();
             }
             KeyCode::Char('d') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(t) = tasks::get(self.conn, &row.id) {
-                        self.mode = Mode::EditingDue;
+                        self.set_mode(Mode::EditingDue);
                         self.input = time::format_local(t.due_at);
                         if self.input == "-" {
                             self.input.clear();
@@ -191,7 +198,7 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('L') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(t) = tasks::get(self.conn, &row.id) {
-                        self.mode = Mode::EditingRrule;
+                        self.set_mode(Mode::EditingRrule);
                         self.input = t.rrule.clone().unwrap_or_default();
                     }
                 }
@@ -199,7 +206,7 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('b') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     // 复用规划钩子中的项目归属流程 (空/Esc 跳过)
-                    self.mode = Mode::PlanningProject;
+                    self.set_mode(Mode::PlanningProject);
                     self.input.clear();
                     self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过)", &row.id[..8]);
                 }
@@ -207,7 +214,7 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('W') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(t) = tasks::get(self.conn, &row.id) {
-                        self.mode = Mode::EditingDelegated;
+                        self.set_mode(Mode::EditingDelegated);
                         self.input = t.delegated_to.clone().unwrap_or_default();
                     }
                 }
@@ -216,7 +223,7 @@ impl<'a> AppHandlers for App<'a> {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(t) = tasks::get(self.conn, &row.id) {
                         if t.kind == task::TaskKind::Project {
-                            self.mode = Mode::EditingProjectType;
+                            self.set_mode(Mode::EditingProjectType);
                             self.input.clear();
                             self.status_message = format!("{} 项目类型? (parallel/sequential, 空/Esc 跳过)", &row.id[..8]);
                         } else {
@@ -225,9 +232,29 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             }
+            KeyCode::Char('C') => {
+                let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+                self.set_mode(Mode::ConfiguringPomo);
+                self.input = format!("{};{};{}", pomo.config.work_mins, pomo.config.short_break_mins, pomo.config.long_break_mins);
+            }
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
             KeyCode::Char('A') | KeyCode::Char('D') | KeyCode::Delete => {
+                if self.view == View::Tags {
+                    if let Some(row) = self.items.get(self.selected).cloned() {
+                        let tag_name = row.title.trim_start_matches('@');
+                        match tags::delete_tag(self.conn, tag_name) {
+                            Ok(_) => {
+                                self.status_message = format!("Tag @{} deleted", tag_name);
+                                self.refresh()?;
+                            }
+                            Err(e) => {
+                                self.status_message = format!("Delete failed: {}", e);
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 let mut ids = vec![];
                 if self.mode == Mode::Visual && !self.selected_ids.is_empty() {
                     ids.extend(self.selected_ids.iter().cloned());
@@ -238,19 +265,41 @@ impl<'a> AppHandlers for App<'a> {
                     return Ok(());
                 }
                 self.pending_archive_ids = ids;
-                self.mode = Mode::ConfirmArchive;
+                self.set_mode(Mode::ConfirmArchive);
                 self.status_message = format!(
                     "确认归档 {} 项? (y/Enter 确认, n/Esc 取消)",
                     self.pending_archive_ids.len()
                 );
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
-            KeyCode::Char('C')
+            KeyCode::Char('K')
                 if self.items.get(self.selected).is_some() => {
-                    self.mode = Mode::ChecklistAdding;
+                    self.set_mode(Mode::ChecklistAdding);
                     self.input.clear();
                 }
             KeyCode::Char(' ') => {
+                if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                    let is_in_break = matches!(pomo.phase, crate::model::pomodoro::Phase::ShortBreak | crate::model::pomodoro::Phase::LongBreak);
+                    let is_post_break_idle = pomo.phase == crate::model::pomodoro::Phase::Idle && (pomo.today_count > 0 || pomo.task_id.is_some());
+                    
+                    if is_in_break || is_post_break_idle {
+                        let target_id = self.items.get(self.selected).map(|r| r.id.clone())
+                            .or(pomo.task_id);
+                        if let Some(tid) = target_id {
+                            if let Ok(t) = tasks::get(self.conn, &tid) {
+                                if t.status != task::Status::Next && t.status != task::Status::Done {
+                                    let _ = tasks::transition(self.conn, &tid, task::Status::Next);
+                                    let _ = self.refresh();
+                                }
+                            }
+                            let _ = crate::commands::pomo::start(self.conn, &tid);
+                            self.status_message = format!("🚀 零摩擦开启新一轮专注！ ({})", &tid[..8]);
+                            self.load_detail();
+                            return Ok(());
+                        }
+                    }
+                }
+
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(mut task) = tasks::get(self.conn, &row.id) {
                         if !task.checklist.is_empty() {
@@ -277,9 +326,18 @@ impl<'a> AppHandlers for App<'a> {
                 }
             }
             KeyCode::Char('P') => {
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    let _ = crate::commands::pomo::start(self.conn, &row.id);
-                    self.status_message = format!("pomodoro started for {}", &row.id[..8]);
+                let target_id = self.items.get(self.selected).map(|r| r.id.clone())
+                    .or_else(|| crate::repo::pomodoro::get_state().ok().and_then(|s| s.task_id));
+                if let Some(tid) = target_id {
+                    if let Ok(t) = tasks::get(self.conn, &tid) {
+                        if t.status != task::Status::Next && t.status != task::Status::Done {
+                            let _ = tasks::transition(self.conn, &tid, task::Status::Next);
+                            let _ = self.refresh();
+                        }
+                    }
+                    let _ = crate::commands::pomo::start(self.conn, &tid);
+                    self.status_message = format!("🎯 Focus & Pomodoro started for {}", &tid[..8]);
+                    self.load_detail();
                 }
             }
             KeyCode::Char('S') => {
@@ -287,14 +345,14 @@ impl<'a> AppHandlers for App<'a> {
                 self.status_message = "pomodoro stopped".into();
             }
             KeyCode::Char('/') => {
-                self.mode = Mode::Search;
+                self.set_mode(Mode::Search);
                 self.input = self.search_query.clone();
             }
             KeyCode::Char('u') => {
                 let _ = self.restore_selected();
             }
             KeyCode::Char('f') => {
-                self.mode = Mode::FilteringTag;
+                self.set_mode(Mode::FilteringTag);
                 self.input = self.tag_filter.clone().unwrap_or_default();
             }
             _ => {}
@@ -308,11 +366,11 @@ impl<'a> AppHandlers for App<'a> {
                 match res {
                     Some((start, end)) => {
                         self.sched_dates = Some((start, end));
-                        self.mode = Mode::SchedulingTimeRRule;
+                        self.set_mode(Mode::SchedulingTimeRRule);
                         self.input.clear();
                     }
                     None => {
-                        self.mode = Mode::Normal;
+                        self.set_mode(Mode::Normal);
                     }
                 }
             }
@@ -327,9 +385,14 @@ impl<'a> AppHandlers for App<'a> {
                     for id in &ids {
                         if tasks::archive(self.conn, id).is_ok() {
                             count += 1;
+                            if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                                if pomo.task_id.as_deref() == Some(id) {
+                                    let _ = crate::commands::pomo::stop();
+                                }
+                            }
                         }
                     }
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.status_message = format!("archived {} items", count);
                     if self.mode == Mode::Visual {
                         self.selected_ids.clear();
@@ -340,7 +403,7 @@ impl<'a> AppHandlers for App<'a> {
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.pending_archive_ids.clear();
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.status_message = "归档已取消".into();
                     self.refresh()?;
                     self.load_detail();
@@ -352,7 +415,7 @@ impl<'a> AppHandlers for App<'a> {
 
         match key.code {
             KeyCode::Esc => {
-                self.mode = Mode::Normal;
+                self.set_mode(Mode::Normal);
                 self.input.clear();
                 self.refresh()?;
                 self.load_detail();
@@ -360,9 +423,45 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Enter => {
                 let input = self.input.clone();
                 let mode = self.mode;
-                self.mode = Mode::Normal;
+                self.set_mode(Mode::Normal);
                 self.input.clear();
                 self.confirm_input(mode, &input)?;
+            }
+            KeyCode::Tab => {
+                if matches!(self.mode, Mode::Tagging | Mode::FilteringTag | Mode::Capturing) {
+                    let last_word = self.input.split_whitespace().last().unwrap_or("").to_string();
+                    let tag_token = if last_word.starts_with('@') {
+                        last_word[1..].to_string()
+                    } else {
+                        last_word.clone()
+                    };
+                    if !tag_token.is_empty() {
+                        // 优先硬编码的核心 5 个快捷标签，再动态查询 DB 数据库中所有已知标签（包括自定义标签）
+                        let default_tags = vec!["home", "work", "errands", "quick", "focus"];
+                        let mut all_tag_names: Vec<String> = default_tags.iter().map(|s| s.to_string()).collect();
+                        
+                        if let Ok(db_tags) = tags::list_tags(self.conn) {
+                            for t in db_tags {
+                                if !all_tag_names.contains(&t.name) {
+                                    all_tag_names.push(t.name);
+                                }
+                            }
+                        }
+
+                        if let Some(matched) = all_tag_names.iter().find(|p| p.starts_with(&tag_token)) {
+                            let prefix_len = tag_token.len();
+                            if !last_word.starts_with('@') {
+                                let last_word_len = last_word.len();
+                                let new_len = self.input.len() - last_word_len;
+                                self.input.truncate(new_len);
+                                self.input.push('@');
+                                self.input.push_str(&last_word);
+                            }
+                            self.input.push_str(&matched[prefix_len..]);
+                            self.input.push(' ');
+                        }
+                    }
+                }
             }
             KeyCode::Backspace => {
                 self.input.pop();
@@ -565,7 +664,7 @@ impl<'a> AppHandlers for App<'a> {
                         let new_title = format!("{} [Wait: {}]", row.title, who);
                         tasks::rename(self.conn, &row.id, &new_title)?;
                     }
-                    self.mode = Mode::WaitingWhen;
+                    self.set_mode(Mode::WaitingWhen);
                     self.input.clear();
                     return Ok(());
                 }
@@ -606,7 +705,7 @@ impl<'a> AppHandlers for App<'a> {
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         if let Ok(t) = tasks::get(self.conn, &row.id) {
                             if Self::needs_time(&t) {
-                                self.mode = Mode::PlanningTime;
+                                self.set_mode(Mode::PlanningTime);
                                 self.input.clear();
                                 self.status_message =
                                     format!("{} 预计开始/截止? (空/Esc 跳过)", &row.id[..8]);
@@ -614,7 +713,7 @@ impl<'a> AppHandlers for App<'a> {
                             }
                         }
                     }
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.refresh()?;
                     self.load_detail();
                 }
@@ -631,7 +730,7 @@ impl<'a> AppHandlers for App<'a> {
                             Err(e) => self.status_message = format!("bad time: {}", e),
                         }
                     }
-                    self.mode = Mode::Normal;
+                    self.set_mode(Mode::Normal);
                     self.refresh()?;
                     self.load_detail();
                 }
@@ -651,7 +750,42 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                 }
-                self.mode = Mode::Normal;
+                self.set_mode(Mode::Normal);
+                self.input.clear();
+            }
+            Mode::CreatingTag => {
+                let name = input.trim().trim_start_matches('@');
+                if !name.is_empty() {
+                    if let Ok(_) = tags::find_or_create_tag(self.conn, name) {
+                        self.status_message = format!("Tag @{} created", name);
+                        self.refresh()?;
+                    }
+                }
+                self.set_mode(Mode::Normal);
+                self.input.clear();
+            }
+            Mode::ConfiguringPomo => {
+                let parts: Vec<&str> = input.split(';').map(|s| s.trim()).collect();
+                if parts.len() == 3 {
+                    if let (Ok(w), Ok(s), Ok(l)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>(), parts[2].parse::<u32>()) {
+                        if w > 0 && s > 0 && l > 0 {
+                            let mut pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+                            pomo.config.work_mins = w;
+                            pomo.config.short_break_mins = s;
+                            pomo.config.long_break_mins = l;
+                            if crate::repo::pomodoro::save_state(&pomo).is_ok() {
+                                self.status_message = format!("🍅 番茄钟配置已更新: 工作 {}m / 短休 {}m / 长休 {}m", w, s, l);
+                            }
+                        } else {
+                            self.status_message = "时长必须大于0".into();
+                        }
+                    } else {
+                        self.status_message = "配置格式错误 (示例: 25;5;15)".into();
+                    }
+                } else {
+                    self.status_message = "格式必须包含3项 (工作;短休;长休)".into();
+                }
+                self.set_mode(Mode::Normal);
                 self.input.clear();
             }
             Mode::Normal | Mode::Visual | Mode::ConfirmArchive => {}

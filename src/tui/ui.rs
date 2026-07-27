@@ -1,13 +1,16 @@
 use ratatui::{
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::ListItem,
 };
 
 use crate::tui::App;
+use crate::tui::app::Mode;
 
 use crate::model::task::Status;
+use crate::time;
 
+/// 状态缩写（窄字符，用于列表前缀，保持列对齐）。
 pub fn status_letter(s: &Status) -> &'static str {
     match s {
         Status::Inbox => ".",
@@ -20,11 +23,12 @@ pub fn status_letter(s: &Status) -> &'static str {
     }
 }
 
+/// 状态语义色：列表、详情、引导栏统一使用，形成稳定的视觉语言。
 pub fn status_color(s: &Status) -> Color {
     match s {
         Status::Inbox => Color::Gray,
         Status::Next => Color::Yellow,
-        Status::Waiting => Color::Blue,
+        Status::Waiting => Color::LightBlue,
         Status::Scheduled => Color::Cyan,
         Status::Someday => Color::Magenta,
         Status::Reference => Color::White,
@@ -32,26 +36,108 @@ pub fn status_color(s: &Status) -> Color {
     }
 }
 
+/// 优先级标签的配色：p1 红 / p2 黄 / p3 蓝，与状态色区分开。
+pub fn priority_color(tag: &str) -> Option<Color> {
+    match tag {
+        "p1" => Some(Color::Red),
+        "p2" => Some(Color::Yellow),
+        "p3" => Some(Color::Blue),
+        _ => None,
+    }
+}
+
+/// 列表行内的迷你进度条（如 [3/5]），用于项目/检查单。
+fn progress_text(done: Option<usize>, total: Option<usize>) -> String {
+    match (done, total) {
+        (Some(d), Some(t)) if t > 0 => format!("[{}/{}]", d, t),
+        _ => String::new(),
+    }
+}
+
 pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
+    let active_pomo_task_id = crate::repo::pomodoro::get_state()
+        .ok()
+        .and_then(|s| if s.phase != crate::model::pomodoro::Phase::Idle { s.task_id } else { None });
+
     app.items
         .iter()
         .map(|r| {
-            let status_enum = r.status.parse::<crate::model::task::Status>().unwrap_or(crate::model::task::Status::Inbox);
+            let status_enum = r.status.parse::<Status>().unwrap_or(Status::Inbox);
             let letter = status_letter(&status_enum);
             let color = status_color(&status_enum);
-            let due = crate::time::format_local(r.due);
-            let tags = r.tags.join(",");
+            let is_selected = app.mode == Mode::Visual && app.selected_ids.contains(&r.id);
+            let is_focus_task = active_pomo_task_id.as_deref() == Some(&r.id);
+
             let indent = "  ".repeat(r.indent);
-            
-            let is_selected = app.mode == crate::tui::app::Mode::Visual && app.selected_ids.contains(&r.id);
-            let sel_prefix = if is_selected { " [v]" } else { "" };
-            
-            let line = Line::from(vec![
-                Span::styled(format!("{}{}{} ", sel_prefix, indent, letter), Style::default().fg(if is_selected { Color::Yellow } else { color })),
-                Span::styled(r.title.clone(), if is_selected { Style::default().add_modifier(ratatui::style::Modifier::BOLD) } else { Style::default() }),
-                Span::raw(format!("  {}  [{}]", due, tags)),
-            ]);
-            
+            let sel_prefix = if is_selected {
+                " [v]"
+            } else if is_focus_task {
+                " 🎯"
+            } else {
+                ""
+            };
+
+            // 到期：相对时间 + 逾期红色强调
+            let due_text = time::relative_due(r.due)
+                .map(|s| format!("~{}", s))
+                .unwrap_or_default();
+            let due_color = if time::is_overdue(r.due) {
+                Color::Red
+            } else {
+                Color::DarkGray
+            };
+
+            let mut spans = vec![Span::styled(
+                format!("{}{}{} ", sel_prefix, indent, letter),
+                Style::default().fg(if is_focus_task { Color::LightRed } else if is_selected { Color::Yellow } else { color }).add_modifier(if is_focus_task { Modifier::BOLD } else { Modifier::empty() }),
+            )];
+
+            // 标题（选中时加粗，专注任务特殊高亮）
+            let title_style = if is_focus_task {
+                Style::default().fg(Color::LightRed).add_modifier(Modifier::BOLD)
+            } else if is_selected {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            spans.push(Span::styled(r.title.clone(), title_style));
+
+            // 进度
+            let prog = progress_text(r.done, r.total);
+            if !prog.is_empty() {
+                spans.push(Span::styled(
+                    format!(" {}", prog),
+                    Style::default().fg(Color::Green),
+                ));
+            }
+
+            // 标签（优先级彩色）
+            if !r.tags.is_empty() {
+                spans.push(Span::raw(" "));
+                let mut first = true;
+                for t in &r.tags {
+                    if !first {
+                        spans.push(Span::raw(","));
+                    }
+                    first = false;
+                    let c = priority_color(t).unwrap_or(Color::Cyan);
+                    spans.push(Span::styled(format!("@{}", t), Style::default().fg(c)));
+                }
+            }
+
+            // 到期
+            if !due_text.is_empty() {
+                spans.push(Span::styled(
+                    format!("  {}", due_text),
+                    Style::default().fg(due_color).add_modifier(if due_color == Color::Red {
+                        Modifier::BOLD
+                    } else {
+                        Modifier::empty()
+                    }),
+                ));
+            }
+
+            let line = Line::from(spans);
             let mut item = ListItem::new(line);
             if is_selected {
                 item = item.style(Style::default().bg(Color::DarkGray));

@@ -48,6 +48,7 @@ pub(crate) enum View {
     Projects,
     Review,
     Archived,
+    Tags,
 }
 
 impl View {
@@ -63,6 +64,7 @@ impl View {
             View::Projects => "Projects",
             View::Review => "Review",
             View::Archived => "Archived",
+            View::Tags => "Tags",
         }
     }
 
@@ -76,7 +78,7 @@ impl View {
             View::Someday => Some("someday"),
             View::Reference => Some("reference"),
             View::Done => Some("done"),
-            View::Projects | View::Review | View::Archived => None,
+            View::Projects | View::Review | View::Archived | View::Tags => None,
         }
     }
 
@@ -91,6 +93,7 @@ impl View {
             '6' => Some(View::Reference),
             '7' => Some(View::Done),
             '8' => Some(View::Archived),
+            '9' => Some(View::Tags),
             _ => None,
         }
     }
@@ -124,6 +127,16 @@ pub(crate) enum Mode {
     EditingDelegated,
     /// 编辑项目类型 (project_type, 仅项目)
     EditingProjectType,
+    /// 新增自定义标签
+    CreatingTag,
+    /// 配置番茄钟时长 (工作;短休;长休)
+    ConfiguringPomo,
+}
+
+impl Mode {
+    pub(crate) fn is_input(&self) -> bool {
+        !matches!(self, Mode::Normal | Mode::Visual)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -140,6 +153,10 @@ pub(crate) struct Row {    pub(crate) id: String,
     pub(crate) due: Option<i64>,
     pub(crate) tags: Vec<String>,
     pub(crate) indent: usize,
+    /// 完成进度（用于项目/带检查单的任务）：已完成数，None 表示无进度概念。
+    pub(crate) done: Option<usize>,
+    /// 完成进度：总数。
+    pub(crate) total: Option<usize>,
 }
 
 pub(crate) struct DetailData {    pub(crate) task: Task,
@@ -158,6 +175,8 @@ pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
     pub(crate) input: String,
     pub(crate) status_message: String,
     pub(crate) show_help: bool,
+    pub(crate) show_syntax: bool,
+    pub(crate) help_scroll: usize,
     pub(crate) should_quit: bool,
     pub(crate) calendar: calendar::CalendarState,
     pub(crate) sched_dates: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
@@ -183,8 +202,10 @@ impl<'a> App<'a> {
             mode: Mode::Normal,
             pane: Pane::Left,
             input: String::new(),
-            status_message: "Press '?' for help".to_string(),
+            status_message: "Press '?' or 'F1' for help".to_string(),
             show_help: false,
+            show_syntax: false,
+            help_scroll: 0,
             should_quit: false,
             calendar: calendar::CalendarState::new(),
             sched_dates: None,
@@ -199,7 +220,32 @@ impl<'a> App<'a> {
         };
         app.refresh()?;
         app.load_detail();
+        app.switch_to_english_ime();
         Ok(app)
+    }
+
+    pub(crate) fn set_mode(&mut self, new_mode: Mode) {
+        let old_mode = self.mode;
+        self.mode = new_mode;
+        if old_mode.is_input() && !new_mode.is_input() {
+            self.switch_to_english_ime();
+        }
+    }
+
+    pub(crate) fn switch_to_english_ime(&self) {
+        // Try fcitx5-remote
+        if std::process::Command::new("fcitx5-remote").arg("-c").status().is_ok() {
+            return;
+        }
+        // Try fcitx-remote
+        if std::process::Command::new("fcitx-remote").arg("-c").status().is_ok() {
+            return;
+        }
+        // Try ibus
+        let _ = std::process::Command::new("ibus").args(["engine", "xkb:us::eng"]).status();
+        // Try im-select (macOS / Windows / Cross-platform helper if installed)
+        let _ = std::process::Command::new("im-select").arg("com.apple.keylayout.ABC").status();
+        let _ = std::process::Command::new("im-select").arg("1033").status();
     }
 
     pub(crate) fn update_visual_selection(&mut self) {
@@ -233,6 +279,7 @@ impl<'a> App<'a> {
     pub(crate) fn context_count(&self, v: View) -> usize {
         match v {
             View::Archived => tasks::list_archived(self.conn).map(|t| t.len()).unwrap_or(0),
+            View::Tags => tags::list_tags(self.conn).map(|t| t.len()).unwrap_or(0),
             _ => match v.status() {
                 Some(s) => tasks::count(
                     self.conn,
@@ -284,6 +331,22 @@ impl<'a> App<'a> {
             View::Archived => {
                 for t in tasks::list_archived(self.conn)? {
                     self.items.push(row_from(&t, 0, self.conn)?);
+                }
+            }
+            View::Tags => {
+                if let Ok(all_tags) = tags::list_tags(self.conn) {
+                    for t in all_tags {
+                        self.items.push(Row {
+                            id: t.id.to_string(),
+                            title: format!("@{}", t.name),
+                            status: t.category,
+                            due: None,
+                            tags: vec![],
+                            indent: 0,
+                            done: None,
+                            total: None,
+                        });
+                    }
                 }
             }
             _ => {
@@ -373,6 +436,7 @@ impl<'a> App<'a> {
             View::Done,
             View::Projects,
             View::Review,
+            View::Tags,
             View::Archived,
         ];
         let idx = views.iter().position(|v| *v == self.view).unwrap_or(0) as isize;
@@ -414,7 +478,7 @@ impl<'a> App<'a> {
         let t = tasks::transition(self.conn, &row.id, task::Status::Next)?;
         self.status_message = format!("{} -> next", &t.id[..8]);
         if Self::needs_planning(&t) {
-            self.mode = Mode::PlanningProject;
+            self.set_mode(Mode::PlanningProject);
             self.input.clear();
             let hint = Self::planning_hint(&t);
             self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过) {}", &t.id[..8], hint);
@@ -448,6 +512,12 @@ impl<'a> App<'a> {
                     let row = crate::tui::row_from(&task, 0, self.conn)?;
                     return self.act_next(row);
                 }
+                // 如果当前变动状态的任务正处于 Pomodoro 专注中，且新状态为 Done/Waiting，终止番茄钟
+                if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                    if pomo.task_id.as_deref() == Some(id) && matches!(to, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                        let _ = crate::commands::pomo::stop();
+                    }
+                }
                 let t = tasks::transition(self.conn, id, to)?;
                 self.status_message = format!("{} -> {}", &t.id[..8], t.status);
             }
@@ -457,6 +527,11 @@ impl<'a> App<'a> {
                 if let Ok(task) = tasks::get(self.conn, id) {
                     if task.status != to && tasks::transition(self.conn, id, to).is_ok() {
                         count += 1;
+                        if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                            if pomo.task_id.as_deref() == Some(id) && matches!(to, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                                let _ = crate::commands::pomo::stop();
+                            }
+                        }
                     }
                 }
             }
@@ -464,7 +539,7 @@ impl<'a> App<'a> {
         }
 
         if self.mode == Mode::Visual {
-            self.mode = Mode::Normal;
+            self.set_mode(Mode::Normal);
             self.selected_ids.clear();
             self.visual_start_idx = None;
         }

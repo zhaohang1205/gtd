@@ -2,6 +2,7 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use anyhow::Result;
+use chrono::TimeZone;
 use crate::error::Error;
 use crate::model::event;
 use crate::model::task::{self, Task};
@@ -397,6 +398,37 @@ pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
     let mut out = Vec::new();
     for r in rows {
         out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Count tasks completed per day for the last `n` days (including today),
+/// keyed by local calendar date (YYYY-MM-DD, oldest first). Used by the
+/// Weekly Review trend chart. Only counts tasks whose status is `done`.
+pub fn completed_counts_last_days(conn: &Connection, n: usize) -> Result<Vec<(String, usize)>> {
+    let mut stmt = conn.prepare(
+        "SELECT completed_at FROM tasks \
+         WHERE status='done' AND completed_at IS NOT NULL AND archived_at IS NULL",
+    )?;
+    let rows = stmt.query_map([], |r| r.get::<usize, i64>(0))?;
+    let completed: Vec<i64> = rows.map(|r| r.unwrap_or(0)).collect();
+
+    let today = chrono::Local::now().date_naive();
+    let mut out: Vec<(String, usize)> = Vec::with_capacity(n);
+    for i in (0..n).rev() {
+        let date = today - chrono::Duration::days(i as i64);
+        let key = date.format("%m-%d").to_string();
+        let day_start = chrono::Local
+            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
+            .single()
+            .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
+            .unwrap_or(0);
+        let day_end = day_start + 24 * 3600 * 1000;
+        let count = completed
+            .iter()
+            .filter(|&&c| c >= day_start && c < day_end)
+            .count();
+        out.push((key, count));
     }
     Ok(out)
 }

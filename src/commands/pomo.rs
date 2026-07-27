@@ -16,7 +16,7 @@ pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
     kill_daemon();
     let mut state = pomodoro::get_state()?;
     let now = time::now_ms();
-    let duration_ms = 25 * 60 * 1000;
+    let duration_ms = (state.config.work_mins as i64) * 60 * 1000;
     
     state.phase = Phase::Work;
     state.task_id = Some(task.id.clone());
@@ -25,10 +25,12 @@ pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
     state.end_ts = Some(now + duration_ms);
     pomodoro::save_state(&state)?;
 
-    StdCommand::new("gtp")
+    let exe_path = std::env::current_exe().unwrap_or_else(|_| "gtp".into());
+    StdCommand::new(exe_path)
         .args(["pomo", "daemon"])
         .spawn()?;
         
+    notify("🎯 专注模式开启", &format!("开始专注任务: {}\n预计时长: {} 分钟", task.title, state.config.work_mins));
     println!("Started pomodoro for: {}", task.title);
     Ok(())
 }
@@ -42,6 +44,7 @@ pub fn stop() -> Result<()> {
     state.start_ts = None;
     state.end_ts = None;
     pomodoro::save_state(&state)?;
+    notify("⏹️ 专注已终止", "番茄钟与专注模式已停止");
     println!("Pomodoro stopped.");
     Ok(())
 }
@@ -96,7 +99,7 @@ pub fn daemon() -> Result<()> {
             match state.phase {
                 Phase::Work => {
                     if let Some(ref tid) = state.task_id {
-                        let duration = 25 * 60;
+                        let duration = state.config.work_mins * 60;
                         let _ = crate::repo::log_event(
                             &conn,
                             tid,
@@ -108,23 +111,50 @@ pub fn daemon() -> Result<()> {
                     }
                     state.cycle += 1;
                     state.total_count += 1;
+                    state.today_count += 1;
+                    state.streak += 1;
+                    state.last_completed_task_title = state.task_title.clone();
+
+                    let current_title = state.task_title.as_deref().unwrap_or("无标题");
+                    let total_mins = state.today_count * state.config.work_mins;
+
                     if state.cycle.is_multiple_of(4) {
                         state.phase = Phase::LongBreak;
-                        state.end_ts = Some(now + 15 * 60 * 1000);
-                        notify("Pomodoro Work Complete", "Time for a long break! (15m)");
+                        let long_break_ms = (state.config.long_break_mins as i64) * 60 * 1000;
+                        state.end_ts = Some(now + long_break_ms);
+                        notify(
+                            "🏆 专注成就战报达成！",
+                            &format!(
+                                "🎯 任务: {}\n⏱️ 专注: {}m | 🔥 今日第 {} 个番茄 ({:.1}h)\n💪 连击 Streak: {} 连击！建议长休 {} 分钟 ☕",
+                                current_title,
+                                state.config.work_mins,
+                                state.today_count,
+                                (total_mins as f64) / 60.0,
+                                state.streak,
+                                state.config.long_break_mins
+                            ),
+                        );
                     } else {
                         state.phase = Phase::ShortBreak;
-                        state.end_ts = Some(now + 5 * 60 * 1000);
-                        notify("Pomodoro Work Complete", "Time for a short break! (5m)");
+                        let short_break_ms = (state.config.short_break_mins as i64) * 60 * 1000;
+                        state.end_ts = Some(now + short_break_ms);
+                        notify(
+                            "🎉 专注成就战报达成！",
+                            &format!(
+                                "🎯 任务: {}\n⏱️ 专注: {}m | 🔥 今日第 {} 个番茄 ({:.1}h)\n💪 连击 Streak: {} 连击！开启小休 {} 分钟 ☕",
+                                current_title,
+                                state.config.work_mins,
+                                state.today_count,
+                                (total_mins as f64) / 60.0,
+                                state.streak,
+                                state.config.short_break_mins
+                            ),
+                        );
                     }
                 }
                 Phase::ShortBreak | Phase::LongBreak => {
                     state.phase = Phase::Idle;
-                    state.task_id = None;
-                    state.task_title = None;
-                    state.start_ts = None;
-                    state.end_ts = None;
-                    notify("Break Finished", "Ready to start again!");
+                    notify("⏰ 休息结束！战报结清", "休息已完成！按 [Space / P] 再接再厉开启新一轮，或按 [S] 结束专注。💪");
                 }
                 Phase::Idle => {}
             }
@@ -136,10 +166,36 @@ pub fn daemon() -> Result<()> {
 }
 
 fn notify(summary: &str, body: &str) {
+    // 桌面图形通知
     let _ = StdCommand::new("notify-send")
-        .args([summary, body])
+        .args(["-u", "normal", "-i", "appointment-soon", summary, body])
         .status();
-    let _ = StdCommand::new("paplay")
-        .arg("/usr/share/sounds/freedesktop/stereo/complete.oga")
-        .status();
+
+    // 声音提醒多层降级策略：paplay -> pw-play -> aplay -> mpv -> 终端铃声 \x07
+    let sound_paths = [
+        "/usr/share/sounds/freedesktop/stereo/complete.oga",
+        "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
+        "/usr/share/sounds/freedesktop/stereo/service-login.oga",
+        "/usr/share/sounds/alsa/Front_Center.wav",
+    ];
+
+    let mut played = false;
+    for path in sound_paths.iter() {
+        if std::path::Path::new(path).exists() {
+            if StdCommand::new("paplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
+                || StdCommand::new("pw-play").arg(path).status().map(|s| s.success()).unwrap_or(false)
+                || StdCommand::new("aplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
+                || StdCommand::new("mpv").args(["--no-terminal", path]).status().map(|s| s.success()).unwrap_or(false)
+            {
+                played = true;
+                break;
+            }
+        }
+    }
+
+    if !played {
+        // 音频播放失败时发出终端 Bell 响铃
+        print!("\x07");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+    }
 }

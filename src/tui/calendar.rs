@@ -125,7 +125,7 @@ impl CalendarState {
             }
 
             if is_cursor {
-                style = style.bg(Color::Blue).fg(Color::White).add_modifier(Modifier::BOLD);
+                style = style.bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD);
             } else if is_in_range {
                 style = style.bg(Color::DarkGray).fg(Color::White);
             }

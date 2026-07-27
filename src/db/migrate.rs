@@ -21,5 +21,11 @@ pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
         conn.pragma_update(None, "user_version", 2)?;
     }
 
+    if current_version < 3 {
+        let sql4 = include_str!("../../migrations/0004_seed_more_tags.sql");
+        conn.execute_batch(sql4)?;
+        conn.pragma_update(None, "user_version", 3)?;
+    }
+
     Ok(())
 }

@@ -17,6 +17,8 @@ use std::io::{self, Stdout};
 use std::time::Duration;
 use crate::model::task::{self, Task};
 use crate::repo::tags;
+use crate::repo::tasks;
+use crate::repo::tasks::ListFilter;
 use rusqlite::Connection;
 use app::Row;
 
@@ -46,6 +48,7 @@ pub(crate) fn next_hint(v: View) -> &'static str {
         View::Projects => "把收件箱行动归入项目",
         View::Review => "清空各类积压",
         View::Archived => "选中后按 u 恢复任务",
+        View::Tags => "按 a 新增标签，按 D 删除自定义标签，按 f 过滤",
     }
 }
 
@@ -54,6 +57,33 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         .iter()
         .map(|x| x.name.clone())
         .collect();
+
+    // 完成进度：项目按子任务完成数，行动按检查单完成数。
+    let (done, total) = if t.kind == task::TaskKind::Project {
+        let children = tasks::list(
+            conn,
+            &ListFilter {
+                status: None,
+                project: Some(t.id.clone()),
+                tags: vec![],
+                query: None,
+            },
+        )?;
+        let total = children.len();
+        let done = children.iter().filter(|c| c.status == task::Status::Done).count();
+        if total == 0 {
+            (None, None)
+        } else {
+            (Some(done), Some(total))
+        }
+    } else if !t.checklist.is_empty() {
+        let total = t.checklist.len();
+        let done = t.checklist.iter().filter(|i| i.done).count();
+        (Some(done), Some(total))
+    } else {
+        (None, None)
+    };
+
     Ok(Row {
         id: t.id.clone(),
         title: t.title.clone(),
@@ -61,6 +91,8 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         due: t.due_at.or(t.scheduled_start_at),
         tags,
         indent,
+        done,
+        total,
     })
 }
 
@@ -97,12 +129,28 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
                     app.handle_key(key)?;
                 }
                 Event::Mouse(m) => {
+                    let left_width = terminal.size()?.width * 22 / 100;
+                    let is_left_panel = m.column < left_width;
                     match m.kind {
-                        crossterm::event::MouseEventKind::ScrollDown => app.move_sel(1),
-                        crossterm::event::MouseEventKind::ScrollUp => app.move_sel(-1),
+                        crossterm::event::MouseEventKind::ScrollDown => {
+                            if is_left_panel && app.show_help {
+                                app.help_scroll = app.help_scroll.saturating_add(1).min(20);
+                            } else {
+                                app.move_sel(1);
+                            }
+                        }
+                        crossterm::event::MouseEventKind::ScrollUp => {
+                            if is_left_panel && app.show_help {
+                                app.help_scroll = app.help_scroll.saturating_sub(1);
+                            } else {
+                                app.move_sel(-1);
+                            }
+                        }
                         crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
                             if m.column > terminal.size()?.width / 2 {
                                 app.pane = Pane::Right;
+                            } else if is_left_panel {
+                                app.pane = Pane::Left;
                             } else {
                                 app.pane = Pane::Center;
                             }
@@ -251,7 +299,7 @@ mod tests {
         // 4) 收集后自动跳回 Inbox
         app.handle_key(key('a')).unwrap();
         let s = norm(&frame("6-capture-mode", &mut term, &mut app, &mut out));
-        assert!(s.contains("支持自然语言"), "收集提示");
+        assert!(s.contains("快速录入"), "收集提示");
         for c in "Buy milk".chars() {
             app.handle_key(key(c)).unwrap();
         }
@@ -335,9 +383,12 @@ mod tests {
         let s = norm(&frame("21-after-schedule", &mut term, &mut app, &mut out));
         assert!(s.contains("sched"), "显示排程时间");
 
-        // 10) 归档 + 帮助切换 + 退出
+        // 10) 归档(需确认) + 帮助切换 + 退出
         app.handle_key(key('4')).unwrap();
         app.handle_key(key('A')).unwrap();
+        frame("22-archive-confirm", &mut term, &mut app, &mut out);
+        // 归档需要 y 确认，确认后回到 Normal 才能打开帮助
+        app.handle_key(key('y')).unwrap();
         frame("22-after-archive", &mut term, &mut app, &mut out);
         app.handle_key(key('?')).unwrap();
         let s = norm(&frame("23-help", &mut term, &mut app, &mut out));
@@ -390,9 +441,12 @@ mod tests {
         app.handle_key(key('R')).unwrap(); // Step 2
         assert_eq!(app.review_step, 2);
         assert_eq!(app.view, View::Projects);
-        
+
         app.handle_key(key('R')).unwrap(); // Step 3
-        app.handle_key(key('R')).unwrap(); // Step 4
+        app.handle_key(key('R')).unwrap(); // Step 4 (view=Done, renders review chart)
+        let s = norm(&frame("11-review-chart", &mut term, &mut app, &mut out));
+        assert!(s.contains("近7天完成趋势"), "周回顾应显示趋势图");
+        assert!(s.contains("状态分布"), "周回顾应显示状态分布");
         app.handle_key(key('R')).unwrap(); // Finish
         assert!(!app.is_reviewing);
         assert_eq!(app.view, View::Next);

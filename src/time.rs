@@ -30,6 +30,44 @@ fn local_to_utc_ms(nd: NaiveDateTime) -> Result<i64> {
     Ok(local_dt.with_timezone(&Utc).timestamp_millis())
 }
 
+/// Compact relative description of a due/scheduled timestamp for list rows.
+/// Returns `None` when `ms` is `None`. Examples: "逾期2天", "今天", "3天后", "1小时前".
+pub fn relative_due(ms: Option<i64>) -> Option<String> {
+    let ms = ms?;
+    let now = now_ms();
+    let day_ms = 24 * 3600 * 1000i64;
+    let diff_days = (ms - now).div_euclid(day_ms);
+    let rem_ms = (ms - now).rem_euclid(day_ms);
+    let diff_hours = rem_ms as f64 / (3600.0 * 1000.0);
+
+    let suffix = if ms < now { "前" } else { "后" };
+    let text = if (ms - now).abs() < day_ms {
+        if diff_hours < 1.0 {
+            let m = (diff_hours * 60.0).round().max(1.0) as i64;
+            format!("{}分钟{}", m, suffix)
+        } else {
+            let h = diff_hours.round() as i64;
+            format!("{}小时{}", h, suffix)
+        }
+    } else if diff_days == 0 {
+        "今天".to_string()
+    } else if diff_days == 1 {
+        "明天".to_string()
+    } else if diff_days == -1 {
+        "昨天".to_string()
+    } else if diff_days > 0 {
+        format!("{}天后", diff_days)
+    } else {
+        format!("逾期{}天", -diff_days)
+    };
+    Some(text)
+}
+
+/// Whether a due/scheduled timestamp is overdue (strictly before now).
+pub fn is_overdue(ms: Option<i64>) -> bool {
+    ms.is_some_and(|m| m < now_ms())
+}
+
 /// Parse a human-friendly time string into UTC milliseconds.
 /// Supports:
 ///   "now"
