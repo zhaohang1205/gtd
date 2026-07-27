@@ -188,6 +188,7 @@ pub(crate) struct App<'a> {    pub(crate) conn: &'a Connection,
     pub(crate) review_step: u8,
     pub(crate) needs_clear: bool,
     pub(crate) pending_archive_ids: Vec<String>,
+    pub(crate) hide_pomo_banner: bool,
 }
 
 impl<'a> App<'a> {
@@ -217,6 +218,7 @@ impl<'a> App<'a> {
             review_step: 0,
             needs_clear: false,
             pending_archive_ids: Vec::new(),
+            hide_pomo_banner: false,
         };
         app.refresh()?;
         app.load_detail();

@@ -7,6 +7,9 @@ use crate::repo::tasks::CaptureInput;
 use crate::time;
 use super::calendar;
 
+fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
+}
 pub(crate) trait AppHandlers {
     fn handle_key(&mut self, key: KeyEvent) -> Result<()>;
     fn handle_normal(&mut self, key: KeyEvent) -> Result<()>;
@@ -49,6 +52,9 @@ impl<'a> AppHandlers for App<'a> {
                     self.status_message = "Cleared filters".into();
                     let _ = self.refresh();
                     self.load_detail();
+                } else {
+                    self.hide_pomo_banner = true;
+                    self.status_message.clear();
                 }
             }
             KeyCode::Char('v') | KeyCode::Char('V') => {
@@ -208,7 +214,7 @@ impl<'a> AppHandlers for App<'a> {
                     // 复用规划钩子中的项目归属流程 (空/Esc 跳过)
                     self.set_mode(Mode::PlanningProject);
                     self.input.clear();
-                    self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过)", &row.id[..8]);
+                    self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过)", short_id(&row.id));
                 }
             }
             KeyCode::Char('W') => {
@@ -225,7 +231,7 @@ impl<'a> AppHandlers for App<'a> {
                         if t.kind == task::TaskKind::Project {
                             self.set_mode(Mode::EditingProjectType);
                             self.input.clear();
-                            self.status_message = format!("{} 项目类型? (parallel/sequential, 空/Esc 跳过)", &row.id[..8]);
+                            self.status_message = format!("{} 项目类型? (parallel/sequential, 空/Esc 跳过)", short_id(&row.id));
                         } else {
                             self.status_message = "仅项目可设置项目类型".into();
                         }
@@ -280,7 +286,12 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char(' ') => {
                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
                     let is_in_break = matches!(pomo.phase, crate::model::pomodoro::Phase::ShortBreak | crate::model::pomodoro::Phase::LongBreak);
-                    let is_post_break_idle = pomo.phase == crate::model::pomodoro::Phase::Idle && (pomo.today_count > 0 || pomo.task_id.is_some());
+                    // 跨天检测：Idle 且 last_date 是今天，才触发续杯逻辑
+                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    let today_active = pomo.last_date.as_deref() == Some(today.as_str());
+                    let is_post_break_idle = pomo.phase == crate::model::pomodoro::Phase::Idle
+                        && today_active
+                        && (pomo.today_count > 0 || pomo.task_id.is_some());
                     
                     if is_in_break || is_post_break_idle {
                         let target_id = self.items.get(self.selected).map(|r| r.id.clone())
@@ -293,7 +304,7 @@ impl<'a> AppHandlers for App<'a> {
                                 }
                             }
                             let _ = crate::commands::pomo::start(self.conn, &tid);
-                            self.status_message = format!("🚀 零摩擦开启新一轮专注！ ({})", &tid[..8]);
+                            self.status_message = format!("🚀 零摩擦开启新一轮专注！ ({})", short_id(&tid));
                             self.load_detail();
                             return Ok(());
                         }
@@ -336,13 +347,13 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     let _ = crate::commands::pomo::start(self.conn, &tid);
-                    self.status_message = format!("🎯 Focus & Pomodoro started for {}", &tid[..8]);
+                    self.status_message = format!("🎯 Focus & Pomodoro started for {}", short_id(&tid));
                     self.load_detail();
                 }
             }
             KeyCode::Char('S') => {
                 let _ = crate::commands::pomo::stop();
-                self.status_message = "pomodoro stopped".into();
+                self.status_message.clear();
             }
             KeyCode::Char('/') => {
                 self.set_mode(Mode::Search);
@@ -383,12 +394,16 @@ impl<'a> AppHandlers for App<'a> {
                     let ids = std::mem::take(&mut self.pending_archive_ids);
                     let mut count = 0;
                     for id in &ids {
-                        if tasks::archive(self.conn, id).is_ok() {
-                            count += 1;
-                            if let Ok(pomo) = crate::repo::pomodoro::get_state() {
-                                if pomo.task_id.as_deref() == Some(id) {
-                                    let _ = crate::commands::pomo::stop();
+                        if let Ok(task) = tasks::get(self.conn, id) {
+                            if matches!(task.status, task::Status::Done | task::Status::Waiting | task::Status::Someday) {
+                                if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                                    if pomo.task_id.as_deref() == Some(id) {
+                                        let _ = crate::commands::pomo::stop();
+                                    }
                                 }
+                            }
+                            if tasks::archive(self.conn, id).is_ok() {
+                                count += 1;
                             }
                         }
                     }
@@ -501,7 +516,7 @@ impl<'a> AppHandlers for App<'a> {
                 if !title.is_empty() {
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         tasks::rename(self.conn, &row.id, title)?;
-                        self.status_message = format!("renamed {}", &row.id[..8]);
+                        self.status_message = format!("renamed {}", short_id(&row.id));
                         self.refresh()?;
                         self.load_detail();
                     }
@@ -512,12 +527,12 @@ impl<'a> AppHandlers for App<'a> {
                     let inp = input.trim();
                     if inp.is_empty() {
                         tasks::set_due(self.conn, &row.id, None)?;
-                        self.status_message = format!("due cleared {}", &row.id[..8]);
+                        self.status_message = format!("due cleared {}", short_id(&row.id));
                     } else {
                         match time::parse_time(inp) {
                             Ok(ms) => {
                                 tasks::set_due(self.conn, &row.id, Some(ms))?;
-                                self.status_message = format!("due set {}", &row.id[..8]);
+                                self.status_message = format!("due set {}", short_id(&row.id));
                             }
                             Err(e) => self.status_message = format!("bad time: {}", e),
                         }
@@ -533,9 +548,9 @@ impl<'a> AppHandlers for App<'a> {
                     let set = rrule.is_some();
                     tasks::set_rrule(self.conn, &row.id, rrule)?;
                     self.status_message = if set {
-                        format!("rrule set {}", &row.id[..8])
+                        format!("rrule set {}", short_id(&row.id))
                     } else {
-                        format!("rrule cleared {}", &row.id[..8])
+                        format!("rrule cleared {}", short_id(&row.id))
                     };
                     self.refresh()?;
                     self.load_detail();
@@ -548,9 +563,9 @@ impl<'a> AppHandlers for App<'a> {
                     let set = who.is_some();
                     tasks::set_delegated(self.conn, &row.id, who)?;
                     self.status_message = if set {
-                        format!("delegated {}", &row.id[..8])
+                        format!("delegated {}", short_id(&row.id))
                     } else {
-                        format!("delegated cleared {}", &row.id[..8])
+                        format!("delegated cleared {}", short_id(&row.id))
                     };
                     self.refresh()?;
                     self.load_detail();
@@ -563,7 +578,7 @@ impl<'a> AppHandlers for App<'a> {
                         match inp.parse::<task::ProjectType>() {
                             Ok(pt) => {
                                 tasks::set_project_type(self.conn, &row.id, pt)?;
-                                self.status_message = format!("project type {}", &row.id[..8]);
+                                self.status_message = format!("project type {}", short_id(&row.id));
                             }
                             Err(e) => self.status_message = format!("bad type: {}", e),
                         }
@@ -594,7 +609,7 @@ impl<'a> AppHandlers for App<'a> {
                         },
                     )?;
                     self.set_view(View::Inbox);
-                    self.status_message = format!("captured {}", &t.id[..8]);
+                    self.status_message = format!("captured {}", short_id(&t.id));
                 }
             }
             Mode::Tagging => {
@@ -651,7 +666,7 @@ impl<'a> AppHandlers for App<'a> {
                             Some(end_ms),
                             final_rrule,
                         );
-                        self.status_message = format!("scheduled {}", &row.id[..8]);
+                        self.status_message = format!("scheduled {}", short_id(&row.id));
                         self.refresh().unwrap_or(());
                         self.load_detail();
                     }
@@ -679,7 +694,7 @@ impl<'a> AppHandlers for App<'a> {
                         Ok(start_ms) => {
                             tasks::schedule(self.conn, &row.id, start_ms, None, None)?;
                             let t = tasks::transition(self.conn, &row.id, task::Status::Waiting)?;
-                            self.status_message = format!("{} -> waiting", &t.id[..8]);
+                            self.status_message = format!("{} -> waiting", short_id(&t.id));
                             self.refresh()?;
                             self.load_detail();
                         }
@@ -694,7 +709,7 @@ impl<'a> AppHandlers for App<'a> {
                         // 接受项目 id、id 前缀或标题。
                         if let Ok(pid) = tasks::resolve_project(self.conn, name) {
                             tasks::assign_project(self.conn, &row.id, &pid)?;
-                            self.status_message = format!("{} -> project", &row.id[..8]);
+                            self.status_message = format!("{} -> project", short_id(&row.id));
                         } else {
                             self.status_message = format!("project not found: {}", name);
                         }
@@ -708,7 +723,7 @@ impl<'a> AppHandlers for App<'a> {
                                 self.set_mode(Mode::PlanningTime);
                                 self.input.clear();
                                 self.status_message =
-                                    format!("{} 预计开始/截止? (空/Esc 跳过)", &row.id[..8]);
+                                    format!("{} 预计开始/截止? (空/Esc 跳过)", short_id(&row.id));
                                 return Ok(());
                             }
                         }
@@ -725,7 +740,7 @@ impl<'a> AppHandlers for App<'a> {
                         match time::parse_time(start_s) {
                             Ok(start_ms) => {
                                 tasks::set_due(self.conn, &row.id, Some(start_ms))?;
-                                self.status_message = format!("due set {}", &row.id[..8]);
+                                self.status_message = format!("due set {}", short_id(&row.id));
                             }
                             Err(e) => self.status_message = format!("bad time: {}", e),
                         }
@@ -801,7 +816,7 @@ impl<'a> AppHandlers for App<'a> {
         }
         if let Some(row) = self.items.get(self.selected).cloned() {
             if tasks::unarchive(self.conn, &row.id).is_ok() {
-                self.status_message = format!("restored {}", &row.id[..8]);
+                self.status_message = format!("restored {}", short_id(&row.id));
                 self.refresh()?;
                 self.load_detail();
             }

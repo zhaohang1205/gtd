@@ -9,6 +9,8 @@ use crate::time;
 
 fn kill_daemon() {
     let _ = StdCommand::new("pkill").args(["-f", "gtp pomo daemon"]).status();
+    // 等待旧进程实际退出，防止新旧 daemon 同时写 pomo.json 导致文件损坏
+    thread::sleep(Duration::from_millis(200));
 }
 
 pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
@@ -31,7 +33,6 @@ pub fn start(conn: &Connection, task_id: &str) -> Result<()> {
         .spawn()?;
         
     notify("🎯 专注模式开启", &format!("开始专注任务: {}\n预计时长: {} 分钟", task.title, state.config.work_mins));
-    println!("Started pomodoro for: {}", task.title);
     Ok(())
 }
 
@@ -43,9 +44,11 @@ pub fn stop() -> Result<()> {
     state.task_title = None;
     state.start_ts = None;
     state.end_ts = None;
+    // 显式停止就是中断：streak 归零 + cycle 归零（下次 start 从第 1 个开始计）
+    state.streak = 0;
+    state.cycle = 0;
     pomodoro::save_state(&state)?;
     notify("⏹️ 专注已终止", "番茄钟与专注模式已停止");
-    println!("Pomodoro stopped.");
     Ok(())
 }
 
@@ -109,6 +112,16 @@ pub fn daemon() -> Result<()> {
                             Some(&duration.to_string()),
                         );
                     }
+
+                    // 跨天检测：若日期已切换，重置当日计数和循环计数
+                    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+                    if state.last_date.as_deref() != Some(&today) {
+                        state.today_count = 0;
+                        state.cycle = 0;
+                        state.streak = 0;
+                        state.last_date = Some(today);
+                    }
+
                     state.cycle += 1;
                     state.total_count += 1;
                     state.today_count += 1;
@@ -166,12 +179,12 @@ pub fn daemon() -> Result<()> {
 }
 
 fn notify(summary: &str, body: &str) {
-    // 桌面图形通知
+    // 桌面图形通知（同步，通常很快）
     let _ = StdCommand::new("notify-send")
         .args(["-u", "normal", "-i", "appointment-soon", summary, body])
         .status();
 
-    // 声音提醒多层降级策略：paplay -> pw-play -> aplay -> mpv -> 终端铃声 \x07
+    // 音效提醒：在独立线程中异步播放，防止音频服务卡顿时阻塞 daemon 计时
     let sound_paths = [
         "/usr/share/sounds/freedesktop/stereo/complete.oga",
         "/usr/share/sounds/freedesktop/stereo/alarm-clock-elapsed.oga",
@@ -179,9 +192,21 @@ fn notify(summary: &str, body: &str) {
         "/usr/share/sounds/alsa/Front_Center.wav",
     ];
 
-    let mut played = false;
-    for path in sound_paths.iter() {
-        if std::path::Path::new(path).exists() {
+    let playable: Vec<String> = sound_paths
+        .iter()
+        .filter(|p| std::path::Path::new(p).exists())
+        .map(|p| p.to_string())
+        .collect();
+
+    if playable.is_empty() {
+        print!("\x07");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        return;
+    }
+
+    thread::spawn(move || {
+        let mut played = false;
+        for path in &playable {
             if StdCommand::new("paplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
                 || StdCommand::new("pw-play").arg(path).status().map(|s| s.success()).unwrap_or(false)
                 || StdCommand::new("aplay").arg(path).status().map(|s| s.success()).unwrap_or(false)
@@ -191,11 +216,9 @@ fn notify(summary: &str, body: &str) {
                 break;
             }
         }
-    }
-
-    if !played {
-        // 音频播放失败时发出终端 Bell 响铃
-        print!("\x07");
-        let _ = std::io::Write::flush(&mut std::io::stdout());
-    }
+        if !played {
+            print!("\x07");
+            let _ = std::io::Write::flush(&mut std::io::stdout());
+        }
+    });
 }

@@ -1,6 +1,12 @@
 use super::app::{App, Mode, Pane, View, pad_right};
 use super::{status_cn, next_hint};
-use ratatui::{layout::{Constraint, Direction, Layout, Rect}, style::{Color, Modifier, Style}, text::{Line, Span}, widgets::{Block, Borders, List, Paragraph}, Frame};
+use ratatui::{
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, Paragraph, canvas::{Canvas, Points}},
+    Frame,
+};
 use ratatui::symbols::border;
 use crate::model::{event, task};
 use crate::time;
@@ -10,6 +16,7 @@ use super::ui;
 
 pub(crate) trait AppRender {
     fn render(&mut self, f: &mut Frame);
+    fn render_focus_mode(&mut self, f: &mut Frame, area: Rect);
     fn render_help_drawer(&self, f: &mut Frame, area: Rect);
     fn render_syntax_drawer(&self, f: &mut Frame, area: Rect);
     fn centered_rect(&self, percent_x: u16, percent_y: u16, r: Rect) -> Rect;
@@ -22,6 +29,17 @@ pub(crate) trait AppRender {
 impl<'a> AppRender for App<'a> {
     fn render(&mut self, f: &mut ratatui::Frame) {
         let size = f.area();
+
+        // ── 番茄专注模式：全屏接管 ──
+        {
+            let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+            if !matches!(pomo.phase, crate::model::pomodoro::Phase::Idle) {
+                self.hide_pomo_banner = false; // reset so it shows up next time it becomes Idle
+                self.render_focus_mode(f, size);
+                return;
+            }
+        }
+
         let mut main_area = size;
         if self.is_reviewing {
             let chunks = Layout::default()
@@ -38,53 +56,26 @@ impl<'a> AppRender for App<'a> {
             )));
             f.render_widget(banner, chunks[0]);
             main_area = chunks[1];
-        } else {
+        } else if !self.hide_pomo_banner {
             let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
-            let show_banner = pomo.phase != crate::model::pomodoro::Phase::Idle || pomo.today_count > 0;
-            if show_banner {
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let today_active = pomo.last_date.as_deref() == Some(today.as_str());
+            
+            if today_active && pomo.today_count > 0 {
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([Constraint::Length(1), Constraint::Min(0)])
                     .split(size);
 
-                let now = crate::time::now_ms();
-                let end_ts = pomo.end_ts.unwrap_or(now);
-                let mut diff = (end_ts - now) / 1000;
-                if diff < 0 { diff = 0; }
-                let m = diff / 60;
-                let s = diff % 60;
-
-                if pomo.phase == crate::model::pomodoro::Phase::Work {
-                    let title = pomo.task_title.as_deref().unwrap_or("无标题");
-                    let banner = Paragraph::new(Line::from(vec![
-                        Span::styled(" 🎯 当前专注: ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!(" {} ", title), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!("  |  ⏱️ 倒计时 {:02}:{:02}  |  (按 'S' 终止专注) ", m, s), Style::default().fg(Color::White)),
-                    ]))
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::default().bg(Color::Red));
-                    f.render_widget(banner, chunks[0]);
-                } else if matches!(pomo.phase, crate::model::pomodoro::Phase::ShortBreak | crate::model::pomodoro::Phase::LongBreak) {
-                    let break_name = if pomo.phase == crate::model::pomodoro::Phase::LongBreak { "☕ 长休中" } else { "☕ 小休中" };
-                    let banner = Paragraph::new(Line::from(vec![
-                        Span::styled(format!(" 🏆 成就: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ", pomo.today_count, pomo.streak), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!("{} {:02}:{:02}  |  ", break_name, m, s), Style::default().fg(Color::Black)),
-                        Span::styled("再接再厉? 👉 [Space/P] 开启新一轮  |  [S] 退出休息 ", Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
-                    ]))
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::default().bg(Color::Green));
-                    f.render_widget(banner, chunks[0]);
-                } else {
-                    // 休息自然结束 (Phase::Idle)，保留“成就结清 & 一键续杯”的常驻入口 Banner
-                    let last_title = pomo.last_completed_task_title.as_deref().unwrap_or("上一任务");
-                    let banner = Paragraph::new(Line::from(vec![
-                        Span::styled(format!(" 🏆 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ", pomo.today_count, pomo.streak), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
-                        Span::styled(format!("休息已完成  |  再接再厉? 👉 [Space/P] 开启新一轮专注 [{}] ", last_title), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
-                    ]))
-                    .alignment(ratatui::layout::Alignment::Center)
-                    .style(Style::default().bg(Color::Green));
-                    f.render_widget(banner, chunks[0]);
-                }
+                let last_title = pomo.last_completed_task_title.as_deref().unwrap_or("上一任务");
+                let banner = Paragraph::new(Line::from(vec![
+                    Span::styled(format!(" 🏆 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ", pomo.today_count, pomo.streak), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!("休息已完成  |  再接再厉? 👉 [Space/P] 开启新一轮专注 [{}] ", last_title), Style::default().fg(Color::Black).add_modifier(Modifier::BOLD)),
+                ]))
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::default().bg(Color::Green));
+                
+                f.render_widget(banner, chunks[0]);
                 main_area = chunks[1];
             }
         }
@@ -234,6 +225,189 @@ impl<'a> AppRender for App<'a> {
         }
     }
 
+    fn render_focus_mode(&mut self, f: &mut Frame, area: Rect) {
+        use crate::model::pomodoro::Phase;
+
+        let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+        let now = crate::time::now_ms();
+
+        // ── 时间计算 ──
+        let start_ts = pomo.start_ts.unwrap_or(now);
+        let end_ts   = pomo.end_ts.unwrap_or(now);
+        let total_ms = (end_ts - start_ts).max(1) as f64;
+        let elapsed_fraction = ((now - start_ts) as f64 / total_ms).clamp(0.0, 1.0);
+
+        let diff_secs = ((end_ts - now) / 1000).max(0);
+        let mins = diff_secs / 60;
+        let secs = diff_secs % 60;
+        let time_str = format!("{:02}:{:02}", mins, secs);
+
+        // ── 阶段配色 ──
+        let (phase_icon, phase_label, ring_color, dim_color, bg_color) = match pomo.phase {
+            Phase::Work => (
+                "🎯", "专注模式  —  进行中",
+                Color::Rgb(230, 60, 60),
+                Color::Rgb(70, 25, 25),
+                Color::Rgb(14, 8, 8),
+            ),
+            Phase::ShortBreak => (
+                "☕", "小休中  —  喝杯水放松一下",
+                Color::Rgb(60, 210, 110),
+                Color::Rgb(20, 65, 35),
+                Color::Rgb(8, 16, 10),
+            ),
+            Phase::LongBreak => (
+                "🌿", "长休中  —  好好休息",
+                Color::Rgb(60, 150, 230),
+                Color::Rgb(20, 45, 75),
+                Color::Rgb(8, 12, 22),
+            ),
+            Phase::Idle => return,
+        };
+
+        // ── 全屏背景 ──
+        f.render_widget(
+            Block::default().style(Style::default().bg(bg_color)),
+            area,
+        );
+
+        // ── 布局（垂直分区）──
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // 顶部留白
+                Constraint::Length(2), // 阶段标题
+                Constraint::Length(2), // 任务名称
+                Constraint::Min(10),   // Canvas 番茄进度环
+                Constraint::Length(7), // 大数字倒计时
+                Constraint::Length(2), // 统计栏
+                Constraint::Length(1), // 操作提示
+                Constraint::Length(1), // 底部留白
+            ])
+            .split(area);
+
+        // ── 阶段标题 ──
+        f.render_widget(
+            Paragraph::new(format!("  {}  {}", phase_icon, phase_label))
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(ring_color).bg(bg_color).add_modifier(Modifier::BOLD)),
+            rows[1],
+        );
+
+        // ── 任务名称 ──
+        let task_title = pomo.task_title.as_deref().unwrap_or("(无标题任务)");
+        f.render_widget(
+            Paragraph::new(format!("「{}」", task_title))
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::White).bg(bg_color).add_modifier(Modifier::BOLD)),
+            rows[2],
+        );
+
+        // ── Canvas 圆形进度环 ──
+        let canvas_area = rows[3];
+        let cw = canvas_area.width as f64;
+        let ch = canvas_area.height as f64;
+        // 修正宽高比：终端字符约 2:1 (高:宽)，半块字符使纵向分辨率加倍，
+        // 因此 y_range = 100 * (ch * 2) / cw 使每 canvas 单位对应相同的屏幕像素数
+        let y_range = (100.0 * ch * 2.0 / cw).max(10.0);
+        let cx_c = 50.0_f64;
+        let cy_c = y_range / 2.0;
+        let max_r = cy_c.min(50.0) * 0.88;
+        let outer_r = max_r;
+        let inner_r = max_r * 0.68;
+
+        // 传入 closure 的值（Canvas paint 要求 'static，用 move）
+        let ef = elapsed_fraction;
+        let rc = ring_color;
+        let dc = dim_color;
+        let bgc = bg_color;
+
+        let canvas = Canvas::default()
+            .x_bounds([0.0, 100.0])
+            .y_bounds([0.0, y_range])
+            .background_color(bgc)
+            .paint(move |ctx| {
+                let steps = 1440_usize;
+                let ring_steps = ((outer_r - inner_r) * 3.0) as usize + 1;
+
+                let mut rem_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+                let mut ela_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+
+                for i in 0..steps {
+                    let angle_deg = i as f64 * 360.0 / steps as f64;
+                    // 从正上方 90° 开始，顺时针方向
+                    let angle_rad = (90.0_f64 - angle_deg).to_radians();
+                    let frac = angle_deg / 360.0;
+
+                    for ri in 0..=ring_steps {
+                        let r = inner_r + ri as f64 * (outer_r - inner_r) / ring_steps as f64;
+                        let x = cx_c + r * angle_rad.cos();
+                        let y = cy_c + r * angle_rad.sin();
+                        if x < 0.5 || x > 99.5 || y < 0.5 || y > y_range - 0.5 {
+                            continue;
+                        }
+                        if frac >= ef {
+                            rem_pts.push((x, y));
+                        } else {
+                            ela_pts.push((x, y));
+                        }
+                    }
+                }
+                ctx.draw(&Points { coords: &ela_pts, color: dc });
+                ctx.draw(&Points { coords: &rem_pts, color: rc });
+
+                // 刻度点（12 个，每隔 30°，显示在环外侧）
+                let mut tick_pts = vec![];
+                for t in 0..12 {
+                    let deg = t as f64 * 30.0;
+                    let rad = (90.0_f64 - deg).to_radians();
+                    for ri in 0..=3 {
+                        let r = outer_r + 2.0 + ri as f64 * 0.8;
+                        let x = cx_c + r * rad.cos();
+                        let y = cy_c + r * rad.sin();
+                        tick_pts.push((x, y));
+                    }
+                }
+                ctx.draw(&Points { coords: &tick_pts, color: Color::Rgb(85, 85, 85) });
+            });
+        f.render_widget(canvas, canvas_area);
+
+        // ── 大数字倒计时（绘制在 canvas 之后紧接的行区域）──
+        let digit_area = rows[4];
+        let big_lines = build_big_time(&time_str, ring_color, bg_color);
+        f.render_widget(
+            Paragraph::new(big_lines)
+                .alignment(Alignment::Center)
+                .style(Style::default().bg(bg_color)),
+            digit_area,
+        );
+
+        // ── 统计栏 ──
+        let stats_line = format!(
+            "🍅 今日已完成 {}  ·  ⚡ 连击 {}  ·  🔄 本轮第 {} 个  ·  📊 累计 {}",
+            pomo.today_count, pomo.streak, pomo.cycle, pomo.total_count,
+        );
+        f.render_widget(
+            Paragraph::new(stats_line)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Rgb(155, 155, 155)).bg(bg_color)),
+            rows[5],
+        );
+
+        // ── 操作提示 ──
+        let hints = if matches!(pomo.phase, Phase::ShortBreak | Phase::LongBreak) {
+            "[Space / P] 立即开始下一轮   [S] 结束专注   [Q] 退出"
+        } else {
+            "[S] 停止番茄钟 & 结束专注   [Q] 退出"
+        };
+        f.render_widget(
+            Paragraph::new(hints)
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Rgb(95, 95, 95)).bg(bg_color)),
+            rows[6],
+        );
+    }
+
     fn render_help_drawer(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         f.render_widget(ratatui::widgets::Clear, area);
         let keys_block = Block::default()
@@ -296,32 +470,30 @@ impl<'a> AppRender for App<'a> {
             .border_style(Style::default().fg(Color::Yellow))
             .title(" 语法说明指南 (Ctrl+P) ");
         let syntax = vec![
-            Line::from(Span::styled("快速录入语法 (按 a 捕获)", Style::default().add_modifier(Modifier::BOLD))),
-            Line::from("  @标签    添加情境或优先级, 如 @work @p1 @focus (支持 Tab 智能补全)"),
-            Line::from("  ~时间    设置截止时间, 见下方时间语法"),
-            Line::from("  例: a买牛奶 @home ~tomorrow   /   a写周报 @work @p1 ~+3d"),
+            Line::from(Span::styled("快速录入语法 (按 a 捕获)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+            Line::from(vec![Span::raw("  "), Span::styled("@标签", Style::default().fg(Color::Green)), Span::raw("    添加情境或优先级, 如 "), Span::styled("@work @p1", Style::default().fg(Color::LightBlue)), Span::raw(" (支持 Tab 补全)")]),
+            Line::from(vec![Span::raw("  "), Span::styled("~时间", Style::default().fg(Color::Green)), Span::raw("    设置截止时间, 见下方时间语法")]),
+            Line::from(vec![Span::raw("  例: "), Span::styled("a买牛奶 @home ~tomorrow", Style::default().fg(Color::LightBlue)), Span::raw(" / "), Span::styled("a写周报 @work @p1 ~+3d", Style::default().fg(Color::LightBlue))]),
             Line::from(""),
-            Line::from(Span::styled("时间语法 (~ 与排期 c)", Style::default().add_modifier(Modifier::BOLD))),
-            Line::from("  now / +2h +30m +1d +1w   相对时间偏移"),
-            Line::from("  today / tomorrow [HH:MM]   今天/明天指定时刻 (默认 00:00)"),
-            Line::from("  HH:MM                    当天指定时刻, 如 18:00"),
-            Line::from("  2026-07-24 / 2026-07-24 14:30   绝对日期与时间"),
+            Line::from(Span::styled("时间语法 (~ 与排期 c)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+            Line::from(vec![Span::raw("  "), Span::styled("now / +2h +30m +1d +1w", Style::default().fg(Color::Green)), Span::raw("    相对时间偏移")]),
+            Line::from(vec![Span::raw("  "), Span::styled("today / tomorrow [HH:MM]", Style::default().fg(Color::Green)), Span::raw("  今天/明天指定时刻")]),
+            Line::from(vec![Span::raw("  "), Span::styled("HH:MM", Style::default().fg(Color::Green)), Span::raw("                     当天指定时刻, 如 18:00")]),
+            Line::from(vec![Span::raw("  "), Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(Color::Green)), Span::raw("        绝对日期与时间")]),
             Line::from(""),
-            Line::from(Span::styled("周期 / 循环任务 (Habit / RRULE)", Style::default().add_modifier(Modifier::BOLD))),
-            Line::from("  先按 c 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务"),
-            Line::from("  循环任务标记为完成时不会消失, 而是自动顺延到下一周期"),
-            Line::from("  (状态自动回到 Scheduled, 时间推进到下一个发生点, 记 habit_completed)"),
-            Line::from("  FREQ=DAILY|WEEKLY|MONTHLY      循环频率"),
-            Line::from("  INTERVAL=2                      循环间隔 (如每 2 周)"),
-            Line::from("  BYDAY=SA,SU                     指定周几 (MO TU WE TH FR SA SU)"),
-            Line::from("  COUNT=10 / UNTIL=2026-12-31     终止条件 (做到第N次或特定日期截至)"),
-            Line::from("  例: ;FREQ=WEEKLY;BYDAY=SA,SU    ;FREQ=DAILY;COUNT=30"),
+            Line::from(Span::styled("周期 / 循环任务 (Habit / RRULE)", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+            Line::from(vec![Span::raw("  先按 "), Span::styled("c", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务")]),
+            Line::from(vec![Span::raw("  "), Span::styled("FREQ=DAILY|WEEKLY|MONTHLY", Style::default().fg(Color::Green)), Span::raw("   循环频率")]),
+            Line::from(vec![Span::raw("  "), Span::styled("INTERVAL=2", Style::default().fg(Color::Green)), Span::raw("                  循环间隔 (如每 2 周)")]),
+            Line::from(vec![Span::raw("  "), Span::styled("BYDAY=SA,SU", Style::default().fg(Color::Green)), Span::raw("                 指定周几 (MO TU WE TH FR SA SU)")]),
+            Line::from(vec![Span::raw("  "), Span::styled("COUNT=10 / UNTIL=YYYY-MM-DD", Style::default().fg(Color::Green)), Span::raw(" 终止条件")]),
+            Line::from(vec![Span::raw("  例: "), Span::styled(";FREQ=WEEKLY;BYDAY=SA,SU", Style::default().fg(Color::LightBlue)), Span::raw("    "), Span::styled(";FREQ=DAILY;COUNT=30", Style::default().fg(Color::LightBlue))]),
             Line::from(""),
-            Line::from(Span::styled("其他操作说明", Style::default().add_modifier(Modifier::BOLD))),
-            Line::from("  等待 w 后可填写 [谁/何时], 如 w → Alice → +1d"),
-            Line::from("  子任务 C 新增, SPC 依次打卡, 全部完成自动重置"),
-            Line::from("  标签库 (视图9): 按 a 动态添加自定义标签, 按 D 删除标签"),
-            Line::from("  按 Ctrl+P 弹出/关闭本语法说明指南"),
+            Line::from(Span::styled("其他操作说明", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))),
+            Line::from(vec![Span::raw("  等待 "), Span::styled("w", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 后可填写 [谁/何时], 如 "), Span::styled("w → Alice → +1d", Style::default().fg(Color::LightBlue))]),
+            Line::from(vec![Span::raw("  子任务 "), Span::styled("C", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 新增, "), Span::styled("Space", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 依次打卡, 全部完成自动重置")]),
+            Line::from(vec![Span::raw("  标签库 (视图9): 按 "), Span::styled("a", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 动态新增, 按 "), Span::styled("D", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 删除")]),
+            Line::from(vec![Span::raw("  按 "), Span::styled("Ctrl+P", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)), Span::raw(" 弹出/关闭本语法说明指南")]),
         ];
         let para = Paragraph::new(syntax)
             .block(syntax_block)
@@ -712,4 +884,47 @@ impl<'a> AppRender for App<'a> {
             .max(maxv);
         f.render_widget(chart, chunks[1]);
     }
+}
+
+// ── 大数字字体辅助（5 行 × 4 列，纯 █ 字符）──
+
+fn big_digit_rows(c: char) -> [&'static str; 5] {
+    match c {
+        '0' => [" ██ ", "█  █", "█  █", "█  █", " ██ "],
+        '1' => [" ▐█ ", " ██ ", "  █ ", "  █ ", " ███"],
+        '2' => [" ██ ", "   █", " ██ ", "█   ", "████"],
+        '3' => ["███ ", "   █", " ██ ", "   █", "███ "],
+        '4' => ["█  █", "█  █", "████", "   █", "   █"],
+        '5' => ["████", "█   ", "███ ", "   █", "███ "],
+        '6' => [" ██ ", "█   ", "███ ", "█  █", " ██ "],
+        '7' => ["████", "   █", "  █ ", " █  ", " █  "],
+        '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
+        '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
+        ':' => ["    ", " ██ ", "    ", " ██ ", "    "],
+        _   => ["    ", "    ", "    ", "    ", "    "],
+    }
+}
+
+/// 将形如 "23:45" 的字符串渲染为 5 行大数字（每行是一个 Span）。
+fn build_big_time(s: &str, color: Color, bg: Color) -> Vec<Line<'static>> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut rows: [String; 5] = Default::default();
+    for &c in &chars {
+        let digit = big_digit_rows(c);
+        for (i, part) in digit.iter().enumerate() {
+            rows[i].push_str(part);
+            rows[i].push(' '); // 字符间距
+        }
+    }
+    rows.into_iter()
+        .map(|row| {
+            Line::from(Span::styled(
+                row,
+                Style::default()
+                    .fg(color)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect()
 }

@@ -43,6 +43,9 @@ pub struct PomoState {
     pub last_completed_task_title: Option<String>,
     #[serde(default)]
     pub config: PomoConfig,
+    /// 最近一次完成番茄的日期（"YYYY-MM-DD"），用于跨天重置 today_count / cycle。
+    #[serde(default)]
+    pub last_date: Option<String>,
 }
 
 impl Default for PomoState {
@@ -59,6 +62,7 @@ impl Default for PomoState {
             streak: 0,
             last_completed_task_title: None,
             config: PomoConfig::default(),
+            last_date: None,
         }
     }
 }
