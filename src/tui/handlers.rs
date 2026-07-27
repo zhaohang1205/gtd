@@ -73,6 +73,14 @@ impl<'a> AppHandlers for App<'a> {
             }
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
+            KeyCode::F(5) => {
+                self.theme = self.theme.toggle();
+                self.status_message = if self.theme.is_dark {
+                    "Theme set to Catppuccin Mocha (Dark)".to_string()
+                } else {
+                    "Theme set to Catppuccin Latte (Light)".to_string()
+                };
+            },
             KeyCode::Char('h') => {
                 self.pane = match self.pane {
                     Pane::Right => Pane::Center,

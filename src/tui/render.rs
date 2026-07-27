@@ -66,7 +66,7 @@ impl<'a> AppRender for App<'a> {
                 ),
                 Style::default()
                     .bg(Color::Cyan)
-                    .fg(Color::Black)
+                    .fg(self.theme.bg)
                     .add_modifier(Modifier::BOLD),
             )));
             f.render_widget(banner, chunks[0]);
@@ -89,25 +89,25 @@ impl<'a> AppRender for App<'a> {
                 let banner = Paragraph::new(Line::from(vec![
                     Span::styled(
                         format!(
-                            " 🏆 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
+                            " 󰗠 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
                             pomo.today_count, pomo.streak
                         ),
                         Style::default()
-                            .fg(Color::Black)
+                            .fg(self.theme.bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
                         format!(
-                            "休息已完成  |  再接再厉? 👉 [Space/P] 开启新一轮专注 [{}] ",
+                            "休息已完成  |  再接再厉? 󰄾 [Space/P] 开启新一轮专注 [{}] ",
                             last_title
                         ),
                         Style::default()
-                            .fg(Color::Black)
+                            .fg(self.theme.bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                 ]))
                 .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::default().bg(Color::Green));
+                .style(Style::default().bg(self.theme.text_success));
 
                 f.render_widget(banner, chunks[0]);
                 main_area = chunks[1];
@@ -160,17 +160,17 @@ impl<'a> AppRender for App<'a> {
         self.render_detail(f, body[2]);
 
         // 状态栏 (Statusline)
-        let mode_str = if self.mode == Mode::Normal {
-            " NORMAL "
-        } else {
-            " INSERT "
+        let mode_str = match self.mode {
+            Mode::Normal => " NORMAL ",
+            Mode::Visual => " VISUAL ",
+            _ => " INSERT ",
         };
-        let mode_bg = if self.mode == Mode::Normal {
-            Color::Cyan
-        } else {
-            Color::Yellow
+        let mode_bg = match self.mode {
+            Mode::Normal => self.theme.text_success,
+            Mode::Visual => self.theme.accent,
+            _ => self.theme.text_urgent,
         };
-        let mode_fg = Color::Black;
+        let mode_fg = self.theme.bg;
 
         let status_left = Line::from(vec![
             Span::styled(
@@ -183,8 +183,8 @@ impl<'a> AppRender for App<'a> {
             Span::styled(
                 format!(" {} ", self.view.label()),
                 Style::default()
-                    .fg(Color::White)
-                    .bg(Color::Indexed(238))
+                    .fg(self.theme.fg)
+                    .bg(self.theme.status_bg)
                     .add_modifier(Modifier::BOLD),
             ),
         ]);
@@ -197,13 +197,13 @@ impl<'a> AppRender for App<'a> {
         let status_right = Line::from(vec![
             Span::styled(
                 status_msg,
-                Style::default().fg(Color::White).bg(Color::Indexed(238)),
+                Style::default().fg(self.theme.status_fg).bg(self.theme.status_bg),
             ),
             Span::styled(
                 " gtp ".to_string(),
                 Style::default()
-                    .fg(Color::Black)
-                    .bg(Color::Green)
+                    .fg(self.theme.bg)
+                    .bg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             ),
         ]);
@@ -214,13 +214,13 @@ impl<'a> AppRender for App<'a> {
             .split(chunks[1]);
 
         f.render_widget(
-            Paragraph::new(status_left).style(Style::default().bg(Color::Indexed(238))),
+            Paragraph::new(status_left).style(Style::default().bg(self.theme.status_bg)),
             status_layout[0],
         );
         f.render_widget(
             Paragraph::new(status_right)
-                .alignment(ratatui::layout::Alignment::Right)
-                .style(Style::default().bg(Color::Indexed(238))),
+                .style(Style::default().bg(self.theme.status_bg))
+                .alignment(Alignment::Right),
             status_layout[1],
         );
 
@@ -266,7 +266,7 @@ impl<'a> AppRender for App<'a> {
                 text_lines.push(Line::from(""));
                 text_lines.push(Line::from(Span::styled(
                     " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)",
-                    Style::default().fg(Color::DarkGray),
+                    Style::default().fg(self.theme.text_dim),
                 )));
                 height = 5;
             }
@@ -283,8 +283,8 @@ impl<'a> AppRender for App<'a> {
                 let block = Block::default()
                     .title(title)
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .border_style(Style::default().fg(Color::Yellow));
+                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(if self.pane == Pane::Right { self.theme.border_active } else { self.theme.border_inactive }));
                 f.render_widget(Paragraph::new(text_lines).block(block), left_area);
             } else {
                 let area = self.centered_rect(width, height, size);
@@ -292,8 +292,8 @@ impl<'a> AppRender for App<'a> {
                 let block = Block::default()
                     .title(title)
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .border_style(Style::default().fg(Color::Yellow));
+                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(self.theme.accent));
                 f.render_widget(Paragraph::new(text_lines).block(block), area);
             }
         }
@@ -338,7 +338,7 @@ impl<'a> AppRender for App<'a> {
         // ── 阶段配色 ──
         let (phase_icon, phase_label, ring_color, dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
-                "🎯",
+                "󰓎",
                 "专注模式  —  进行中",
                 Color::Rgb(230, 60, 60),
                 Color::Rgb(70, 25, 25),
@@ -399,7 +399,7 @@ impl<'a> AppRender for App<'a> {
                 .alignment(Alignment::Center)
                 .style(
                     Style::default()
-                        .fg(Color::White)
+                        .fg(self.theme.fg)
                         .bg(bg_color)
                         .add_modifier(Modifier::BOLD),
                 ),
@@ -524,8 +524,8 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(ratatui::widgets::Clear, area);
         let keys_block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Yellow))
+            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+            .border_style(Style::default().fg(self.theme.accent))
             .title(" 快捷键指南 (F1/?) ");
         let keys = [
             ("h/l", "切换面板 (左/中/右栏)"),
@@ -585,26 +585,26 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(ratatui::widgets::Clear, area);
         let syntax_block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .border_style(Style::default().fg(Color::Yellow))
+            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+            .border_style(Style::default().fg(self.theme.accent))
             .title(" 语法说明指南 (Ctrl+P) ");
         let syntax = vec![
             Line::from(Span::styled(
                 "快速录入语法 (按 a 捕获)",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("@标签", Style::default().fg(Color::Green)),
+                Span::styled("@标签", Style::default().fg(self.theme.text_success)),
                 Span::raw("    添加情境或优先级, 如 "),
                 Span::styled("@work @p1", Style::default().fg(Color::LightBlue)),
                 Span::raw(" (支持 Tab 补全)"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("~时间", Style::default().fg(Color::Green)),
+                Span::styled("~时间", Style::default().fg(self.theme.text_success)),
                 Span::raw("    设置截止时间, 见下方时间语法"),
             ]),
             Line::from(vec![
@@ -623,37 +623,37 @@ impl<'a> AppRender for App<'a> {
             Line::from(Span::styled(
                 "时间语法 (~ 与排期 c)",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("now / +2h +30m +1d +1w", Style::default().fg(Color::Green)),
+                Span::styled("now / +2h +30m +1d +1w", Style::default().fg(self.theme.text_success)),
                 Span::raw("    相对时间偏移"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     "today / tomorrow [HH:MM]",
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(self.theme.text_success),
                 ),
                 Span::raw("  今天/明天指定时刻"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("HH:MM", Style::default().fg(Color::Green)),
+                Span::styled("HH:MM", Style::default().fg(self.theme.text_success)),
                 Span::raw("                     当天指定时刻, 如 18:00"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(Color::Green)),
+                Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(self.theme.text_success)),
                 Span::raw("        绝对日期与时间"),
             ]),
             Line::from(""),
             Line::from(Span::styled(
                 "周期 / 循环任务 (Habit / RRULE)",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
@@ -670,25 +670,25 @@ impl<'a> AppRender for App<'a> {
                 Span::raw("  "),
                 Span::styled(
                     "FREQ=DAILY|WEEKLY|MONTHLY",
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(self.theme.text_success),
                 ),
                 Span::raw("   循环频率"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("INTERVAL=2", Style::default().fg(Color::Green)),
+                Span::styled("INTERVAL=2", Style::default().fg(self.theme.text_success)),
                 Span::raw("                  循环间隔 (如每 2 周)"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("BYDAY=SA,SU", Style::default().fg(Color::Green)),
+                Span::styled("BYDAY=SA,SU", Style::default().fg(self.theme.text_success)),
                 Span::raw("                 指定周几 (MO TU WE TH FR SA SU)"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled(
                     "COUNT=10 / UNTIL=YYYY-MM-DD",
-                    Style::default().fg(Color::Green),
+                    Style::default().fg(self.theme.text_success),
                 ),
                 Span::raw(" 终止条件"),
             ]),
@@ -708,7 +708,7 @@ impl<'a> AppRender for App<'a> {
             Line::from(Span::styled(
                 "其他操作说明",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
@@ -800,7 +800,7 @@ impl<'a> AppRender for App<'a> {
             lines.push(Line::from(Span::styled(
                 " 欢迎使用 gtp",
                 Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )));
             lines.push(Line::from(""));
@@ -813,7 +813,7 @@ impl<'a> AppRender for App<'a> {
             lines.push(Line::from(Span::styled(
                 title,
                 Style::default()
-                    .fg(Color::DarkGray)
+                    .fg(self.theme.text_dim)
                     .add_modifier(Modifier::BOLD),
             )));
             for (key, v) in views {
@@ -836,18 +836,18 @@ impl<'a> AppRender for App<'a> {
 
                 if active {
                     let mut style = Style::default()
-                        .fg(Color::Yellow)
+                        .fg(self.theme.accent)
                         .add_modifier(Modifier::BOLD);
                     if is_left_pane {
                         style = style.add_modifier(Modifier::REVERSED);
                     }
                     lines.push(Line::from(Span::styled(
-                        format!(" ▶ {} {} {} {:>3} ", key, icon, padded_label, cnt),
+                        format!(" 󰄾 {} {} {} {:>3} ", key, icon, padded_label, cnt),
                         style,
                     )));
                 } else {
                     lines.push(Line::from(vec![
-                        Span::styled(format!("   {} ", key), Style::default().fg(Color::DarkGray)),
+                        Span::styled(format!("   {} ", key), Style::default().fg(self.theme.text_dim)),
                         Span::raw(format!("{} {} {:>3} ", icon, padded_label, cnt)),
                     ]));
                 }
@@ -869,7 +869,7 @@ impl<'a> AppRender for App<'a> {
         lines.push(Line::from(Span::styled(
             "  [Modules]",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(self.theme.text_dim)
                 .add_modifier(Modifier::BOLD),
         )));
         for (key, v) in &[
@@ -889,18 +889,18 @@ impl<'a> AppRender for App<'a> {
             let padded_label = pad_right(label, 10);
             if active {
                 let mut style = Style::default()
-                    .fg(Color::Yellow)
+                    .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD);
                 if is_left_pane {
                     style = style.add_modifier(Modifier::REVERSED);
                 }
                 lines.push(Line::from(Span::styled(
-                    format!(" ▶ {} {} {}     ", key, icon, padded_label),
+                    format!(" 󰄾 {} {} {}     ", key, icon, padded_label),
                     style,
                 )));
             } else {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("   {} ", key), Style::default().fg(Color::DarkGray)),
+                    Span::styled(format!("   {} ", key), Style::default().fg(self.theme.text_dim)),
                     Span::raw(format!("{} {}     ", icon, padded_label)),
                 ]));
             }
@@ -911,7 +911,7 @@ impl<'a> AppRender for App<'a> {
         lines.push(Line::from(Span::styled(
             "  [Hint]",
             Style::default()
-                .fg(Color::DarkGray)
+                .fg(self.theme.text_dim)
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
@@ -920,15 +920,15 @@ impl<'a> AppRender for App<'a> {
         )));
 
         let border_color = if self.pane == Pane::Left {
-            Color::Yellow
+            self.theme.accent
         } else {
-            Color::DarkGray
+            self.theme.text_dim
         };
         f.render_widget(
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
+                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(border_color))
                     .title(" Guide "),
             ),
@@ -938,9 +938,9 @@ impl<'a> AppRender for App<'a> {
 
     fn render_list(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let border_color = if self.pane == Pane::Center {
-            Color::Yellow
+            self.theme.accent
         } else {
-            Color::DarkGray
+            self.theme.text_dim
         };
         let items = build_list_items(self);
         let title = format!(
@@ -956,14 +956,14 @@ impl<'a> AppRender for App<'a> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
+                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(border_color))
                     .title(title),
             )
             .highlight_style(if self.pane == Pane::Center {
-                Style::default().add_modifier(Modifier::REVERSED)
+                Style::default().bg(self.theme.hl_bg).fg(self.theme.hl_fg).add_modifier(Modifier::BOLD)
             } else {
-                Style::default()
+                Style::default().bg(self.theme.hl_bg)
             });
         f.render_stateful_widget(list, area, &mut self.list_state);
     }
@@ -971,19 +971,23 @@ impl<'a> AppRender for App<'a> {
     fn render_detail(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
         f.render_widget(ratatui::widgets::Clear, area);
         let border_color = if self.pane == Pane::Right {
-            Color::Yellow
+            self.theme.accent
         } else {
-            Color::DarkGray
+            self.theme.text_dim
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
+            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(border_color))
             .title(" 任务详情 ");
 
         match &self.detail {
             None => {
-                f.render_widget(Paragraph::new(" 未选中任务").block(block), area);
+                let empty_para = Paragraph::new("\n\n󰋔\n\n未选中任务")
+                    .alignment(Alignment::Center)
+                    .style(Style::default().fg(self.theme.text_dim).add_modifier(Modifier::ITALIC))
+                    .block(block);
+                f.render_widget(empty_para, area);
             }
             Some(d) => {
                 let mut lines: Vec<Line> = vec![];
@@ -1005,7 +1009,7 @@ impl<'a> AppRender for App<'a> {
                 // 状态
                 let st_color = ui::status_color(&d.task.status);
                 lines.push(Line::from(vec![
-                    Span::styled("状态: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("状态: ", Style::default().fg(self.theme.text_dim)),
                     Span::styled(
                         status_cn(d.task.status),
                         Style::default().fg(st_color).add_modifier(Modifier::BOLD),
@@ -1015,21 +1019,21 @@ impl<'a> AppRender for App<'a> {
                 // 项目
                 if let Some(p) = &d.task.parent_id {
                     lines.push(Line::from(vec![
-                        Span::styled("项目: ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("项目: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(p[..8].to_string()),
                     ]));
                 }
 
                 // 截止时间
                 lines.push(Line::from(vec![
-                    Span::styled("截止: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("截止: ", Style::default().fg(self.theme.text_dim)),
                     Span::raw(time::format_local(d.task.due_at)),
                 ]));
 
                 // 计划时间
                 if d.task.scheduled_start_at.is_some() || d.task.scheduled_end_at.is_some() {
                     lines.push(Line::from(vec![
-                        Span::styled("计划: ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("计划: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(format!(
                             "{} -> {}",
                             time::format_local(d.task.scheduled_start_at),
@@ -1048,7 +1052,7 @@ impl<'a> AppRender for App<'a> {
                         .replace("COUNT=", "次数=")
                         .replace("UNTIL=", "直到=");
                     lines.push(Line::from(vec![
-                        Span::styled("循环: ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("循环: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(cn_rr),
                     ]));
                 }
@@ -1056,7 +1060,7 @@ impl<'a> AppRender for App<'a> {
                 // 标签
                 if !d.tags.is_empty() {
                     let mut tag_spans =
-                        vec![Span::styled("标签: ", Style::default().fg(Color::DarkGray))];
+                        vec![Span::styled("标签: ", Style::default().fg(self.theme.text_dim))];
                     for (i, tg) in d.tags.iter().enumerate() {
                         let c = ui::priority_color(&tg.name).unwrap_or(Color::Cyan);
                         tag_spans.push(Span::styled(
@@ -1073,7 +1077,7 @@ impl<'a> AppRender for App<'a> {
                 // 委派
                 if let Some(del) = &d.task.delegated_to {
                     lines.push(Line::from(vec![
-                        Span::styled("委派: ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("委派: ", Style::default().fg(self.theme.text_dim)),
                         Span::raw(del.clone()),
                     ]));
                 }
@@ -1108,20 +1112,20 @@ impl<'a> AppRender for App<'a> {
                         "[----------] 0/0".to_string()
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("进度: ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(bar, Style::default().fg(Color::Green)),
+                        Span::styled("进度: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(bar, Style::default().fg(self.theme.text_success)),
                     ]));
                 } else if !d.task.checklist.is_empty() {
                     lines.push(Line::from(Span::styled(
                         "检查单:",
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(self.theme.text_dim),
                     )));
                     for item in &d.task.checklist {
                         let check = if item.done { "[x]" } else { "[ ]" };
                         let c = if item.done {
-                            Color::Green
+                            self.theme.text_success
                         } else {
-                            Color::DarkGray
+                            self.theme.text_dim
                         };
                         lines.push(Line::from(Span::styled(
                             format!("  {} {}", check, item.title),
@@ -1139,10 +1143,10 @@ impl<'a> AppRender for App<'a> {
                 if pomo_count > 0 {
                     let tomatoes = " ".repeat(pomo_count);
                     lines.push(Line::from(vec![
-                        Span::styled("专注: ", Style::default().fg(Color::DarkGray)),
+                        Span::styled("专注: ", Style::default().fg(self.theme.text_dim)),
                         Span::styled(
                             format!("{} ({})", tomatoes, pomo_count),
-                            Style::default().fg(Color::Red),
+                            Style::default().fg(self.theme.text_urgent),
                         ),
                     ]));
                 }
@@ -1156,7 +1160,7 @@ impl<'a> AppRender for App<'a> {
                 if d.task.notes.trim().is_empty() {
                     lines.push(Line::from(Span::styled(
                         "备注: -",
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(self.theme.text_dim),
                     )));
                 } else {
                     lines.push(Line::from(Span::styled(
@@ -1259,8 +1263,8 @@ impl<'a> AppRender for App<'a> {
         let para = Paragraph::new(lines).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_set(border::ROUNDED)
-                .border_style(Style::default().fg(Color::DarkGray))
+                .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                .border_style(Style::default().fg(if self.pane == Pane::Left { self.theme.border_active } else { self.theme.border_inactive }))
                 .title(" Review "),
         );
         f.render_widget(para, chunks[0]);
@@ -1279,19 +1283,19 @@ impl<'a> AppRender for App<'a> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .border_style(Style::default().fg(Color::DarkGray))
+                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(if self.pane == Pane::Center { self.theme.border_active } else { self.theme.border_inactive }))
                     .title(" 近7天完成趋势 "),
             )
             .data(&chart_data)
             .bar_width(6)
-            .bar_style(Style::default().fg(Color::Green))
+            .bar_style(Style::default().fg(self.theme.text_success))
             .value_style(
                 Style::default()
-                    .fg(Color::White)
+                    .fg(self.theme.fg)
                     .add_modifier(Modifier::BOLD),
             )
-            .label_style(Style::default().fg(Color::DarkGray))
+            .label_style(Style::default().fg(self.theme.text_dim))
             .max(maxv);
         f.render_widget(chart, chunks[1]);
     }

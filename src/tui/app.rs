@@ -190,6 +190,7 @@ pub(crate) struct App<'a> {
     pub(crate) needs_clear: bool,
     pub(crate) pending_archive_ids: Vec<String>,
     pub(crate) hide_pomo_banner: bool,
+    pub(crate) theme: crate::tui::theme::Theme,
 }
 
 impl<'a> App<'a> {
@@ -220,6 +221,7 @@ impl<'a> App<'a> {
             needs_clear: false,
             pending_archive_ids: Vec::new(),
             hide_pomo_banner: false,
+            theme: crate::tui::theme::Theme::default(),
         };
         app.refresh()?;
         app.load_detail();

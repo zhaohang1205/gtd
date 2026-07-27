@@ -2,6 +2,7 @@ pub mod app;
 pub mod calendar;
 pub mod handlers;
 pub mod render;
+pub mod theme;
 pub mod ui;
 
 pub(crate) use app::{App, Pane, View};
