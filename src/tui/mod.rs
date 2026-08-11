@@ -11,8 +11,6 @@ pub(crate) use render::AppRender;
 
 use crate::model::task::{self, Task};
 use crate::repo::tags;
-use crate::repo::tasks;
-use crate::repo::tasks::ListFilter;
 use anyhow::Result;
 use app::Row;
 use crossterm::event::{self, Event, KeyEventKind};
@@ -42,13 +40,14 @@ pub(crate) fn status_cn(s: task::Status) -> &'static str {
 pub(crate) fn next_hint(v: View) -> &'static str {
     match v {
         View::Inbox => "按 Enter 理清，决定它的去向",
+        View::Today => "今日到期/逾期任务，逐条动手完成",
+        View::Tomorrow => "明日计划，提前准备",
         View::Next => "选一条开始行动（做）",
         View::Waiting => "跟进被阻塞的事项",
         View::Scheduled => "按排程时间执行",
         View::Someday => "定期回顾是否激活",
         View::Reference => "需要时检索查阅",
         View::Done => "可归档已完成事项",
-        View::Projects => "把收件箱行动归入项目",
         View::Review => "清空各类积压",
         View::Archived => "选中后按 u 恢复任务",
         View::Tags => "按 a 新增标签，按 D 删除自定义标签，按 f 过滤",
@@ -61,28 +60,8 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         .map(|x| x.name.clone())
         .collect();
 
-    // 完成进度：项目按子任务完成数，行动按检查单完成数。
-    let (done, total) = if t.kind == task::TaskKind::Project {
-        let children = tasks::list(
-            conn,
-            &ListFilter {
-                status: None,
-                project: Some(t.id.clone()),
-                tags: vec![],
-                query: None,
-            },
-        )?;
-        let total = children.len();
-        let done = children
-            .iter()
-            .filter(|c| c.status == task::Status::Done)
-            .count();
-        if total == 0 {
-            (None, None)
-        } else {
-            (Some(done), Some(total))
-        }
-    } else if !t.checklist.is_empty() {
+    // 完成进度：行动按检查单完成数。
+    let (done, total) = if !t.checklist.is_empty() {
         let total = t.checklist.len();
         let done = t.checklist.iter().filter(|i| i.done).count();
         (Some(done), Some(total))
@@ -204,30 +183,11 @@ mod tests {
     }
 
     fn seed(conn: &Connection) {
-        let proj = tasks::create_capture(
-            conn,
-            &CaptureInput {
-                title: "Website Redesign".into(),
-                kind: task::TaskKind::Project,
-                parent_id: None,
-                status: task::Status::Next,
-                due_at: None,
-                tag_names: vec![],
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        let mk = |title: &str,
-                  kind: task::TaskKind,
-                  parent: Option<&str>,
-                  status: task::Status,
-                  tags: &[&str]| {
+        let mk = |title: &str, status: task::Status, tags: &[&str]| {
             tasks::create_capture(
                 conn,
                 &CaptureInput {
                     title: title.into(),
-                    kind,
-                    parent_id: parent.map(|s| s.to_string()),
                     status,
                     due_at: None,
                     tag_names: tags.iter().map(|s| s.to_string()).collect(),
@@ -236,48 +196,12 @@ mod tests {
             )
             .unwrap();
         };
-        mk(
-            "Write homepage copy",
-            task::TaskKind::Action,
-            Some(&proj.id),
-            task::Status::Inbox,
-            &["work", "p1"],
-        );
-        mk(
-            "Buy groceries",
-            task::TaskKind::Action,
-            None,
-            task::Status::Inbox,
-            &["home", "errands"],
-        );
-        mk(
-            "Read Rust book",
-            task::TaskKind::Action,
-            None,
-            task::Status::Next,
-            &["learning"],
-        );
-        mk(
-            "Pay taxes",
-            task::TaskKind::Action,
-            None,
-            task::Status::Waiting,
-            &["work", "p2"],
-        );
-        mk(
-            "Plan vacation",
-            task::TaskKind::Action,
-            None,
-            task::Status::Someday,
-            &["home"],
-        );
-        mk(
-            "Finish report",
-            task::TaskKind::Action,
-            None,
-            task::Status::Done,
-            &[],
-        );
+        mk("Write homepage copy", task::Status::Inbox, &["work", "p1"]);
+        mk("Buy groceries", task::Status::Inbox, &["home", "errands"]);
+        mk("Read Rust book", task::Status::Next, &["learning"]);
+        mk("Pay taxes", task::Status::Waiting, &["work", "p2"]);
+        mk("Plan vacation", task::Status::Someday, &["home"]);
+        mk("Finish report", task::Status::Done, &[]);
     }
 
     fn snap(term: &Terminal<TestBackend>) -> String {
@@ -365,25 +289,21 @@ mod tests {
         assert!(s.contains("Buymilk"), "新收集的任务出现");
         assert!(s.contains("·Inbox"), "收集后跳到 Inbox");
 
-        // 5) 回车 -> next 触发计划钩子（先问项目，再问时间）
+        // 5) 回车 -> next 触发计划钩子（缺时间则询问时间）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        let s = norm(&frame("8-plan-project", &mut term, &mut app, &mut out));
-        assert!(s.contains("Project?"), "计划钩子询问项目");
-        // 跳过项目
-        app.handle_key(kc(KeyCode::Enter)).unwrap();
-        let s = norm(&frame("9-plan-time", &mut term, &mut app, &mut out));
+        let s = norm(&frame("8-plan-time", &mut term, &mut app, &mut out));
         assert!(s.contains("Time?"), "计划钩子询问时间");
         // 跳过时间 -> 回到正常；被计划的任务已是 next（已离开 inbox）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        frame("10-after-plan", &mut term, &mut app, &mut out);
+        frame("9-after-plan", &mut term, &mut app, &mut out);
         assert!(app.mode == Mode::Normal, "计划钩子结束");
         let in_next = tasks::list(
             &conn,
             &ListFilter {
                 status: Some(task::Status::Next),
-                project: None,
                 tags: vec![],
                 query: None,
+                review_stale: false,
             },
         )
         .unwrap()
@@ -405,12 +325,9 @@ mod tests {
             assert!(s.contains(expect), "视图 {lbl} 应显示 {expect}");
         }
 
-        // 7) 项目树 + 周回顾
-        app.handle_key(key('p')).unwrap();
-        let s = norm(&frame("17-projects", &mut term, &mut app, &mut out));
-        assert!(s.contains("WebsiteRedesign"), "项目视图");
+        // 7) 周回顾向导
         app.handle_key(key('r')).unwrap();
-        let s = norm(&frame("18-review", &mut term, &mut app, &mut out));
+        let s = norm(&frame("17-review", &mut term, &mut app, &mut out));
         assert!(s.contains("每周回顾"), "回顾向导");
         app.handle_key(kc(KeyCode::Esc)).unwrap(); // Cancel wizard
 
@@ -497,13 +414,17 @@ mod tests {
 
         app.handle_key(key('R')).unwrap(); // Step 2
         assert_eq!(app.review_step, 2);
-        assert_eq!(app.view, View::Projects);
+        assert_eq!(app.view, View::Waiting);
 
         app.handle_key(key('R')).unwrap(); // Step 3
-        app.handle_key(key('R')).unwrap(); // Step 4 (view=Done, renders review chart)
-        let s = norm(&frame("11-review-chart", &mut term, &mut app, &mut out));
-        assert!(s.contains("近7天完成趋势"), "周回顾应显示趋势图");
-        assert!(s.contains("状态分布"), "周回顾应显示状态分布");
+        assert_eq!(app.review_step, 3);
+        assert_eq!(app.view, View::Someday);
+
+        app.handle_key(key('R')).unwrap(); // Step 4 (view=Done)
+        assert_eq!(app.view, View::Done);
+        let s = norm(&frame("11-review-done", &mut term, &mut app, &mut out));
+        assert!(s.contains("已完成"), "周回顾第4步显示已完成视图");
+
         app.handle_key(key('R')).unwrap(); // Finish
         assert!(!app.is_reviewing);
         assert_eq!(app.view, View::Next);
@@ -525,5 +446,92 @@ mod tests {
             "empty db should show welcome guide"
         );
         assert!(s.contains("Active"), "guide shows groups");
+    }
+
+    #[test]
+    fn today_tomorrow_views() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let mk = |title: &str, status: task::Status, due_at: i64| {
+            tasks::create_capture(
+                &conn,
+                &CaptureInput {
+                    title: title.into(),
+                    status,
+                    due_at: Some(due_at),
+                    tag_names: vec![],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        };
+        let day_ms = 24 * 3600 * 1000i64;
+        mk(
+            "due-today",
+            task::Status::Next,
+            crate::time::parse_time("today 12:00").unwrap(),
+        );
+        mk(
+            "due-tomorrow",
+            task::Status::Scheduled,
+            crate::time::parse_time("tomorrow 12:00").unwrap(),
+        );
+        mk(
+            "overdue",
+            task::Status::Next,
+            crate::time::now_ms() - 2 * day_ms,
+        );
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "daily-habit".into(),
+                status: task::Status::Scheduled,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(
+            &conn,
+            &rec.id,
+            crate::time::parse_time("today 09:00").unwrap(),
+            None,
+            Some("FREQ=DAILY".into()),
+        )
+        .unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None; // 关闭启动时的今日任务弹窗，避免吞掉按键
+
+        let collect =
+            |app: &App| -> Vec<String> { app.items.iter().map(|r| r.title.clone()).collect() };
+
+        app.handle_key(key('T')).unwrap();
+        assert_eq!(app.view, View::Today, "T 切换到今日视图");
+        let t = collect(&app);
+        assert!(t.iter().any(|s| s == "due-today"), "今日视图含今天到期任务");
+        assert!(t.iter().any(|s| s == "overdue"), "今日视图含逾期任务");
+        assert!(
+            t.iter().any(|s| s == "daily-habit"),
+            "今日视图含今日循环发生"
+        );
+
+        app.handle_key(key('M')).unwrap();
+        assert_eq!(app.view, View::Tomorrow, "M 切换到明日视图");
+        let t = collect(&app);
+        assert!(
+            t.iter().any(|s| s == "due-tomorrow"),
+            "明日视图含明天到期任务"
+        );
+        assert!(
+            t.iter().any(|s| s == "daily-habit"),
+            "明日视图含明日循环发生"
+        );
+        assert!(!t.iter().any(|s| s == "overdue"), "明日视图不含逾期任务");
+        assert!(
+            !t.iter().any(|s| s == "due-today"),
+            "明日视图不含今天到期任务"
+        );
     }
 }

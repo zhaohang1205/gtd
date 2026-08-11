@@ -9,6 +9,19 @@ pub fn now_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+/// Local-day boundaries in UTC ms for a day offset (0 = today, 1 = tomorrow).
+/// Returns `(start, end)` where `start` is local midnight and `end` is
+/// 23:59:59.999 of the same day (both inclusive).
+pub fn local_day_bounds(offset_days: i64) -> (i64, i64) {
+    let day = Local::now().date_naive() + Duration::days(offset_days);
+    let start =
+        local_to_utc_ms(day.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())).unwrap_or(0);
+    let end =
+        local_to_utc_ms(day.and_time(NaiveTime::from_hms_milli_opt(23, 59, 59, 999).unwrap()))
+            .unwrap_or(0);
+    (start, end)
+}
+
 /// Format a UTC-ms timestamp for display in the user's local timezone.
 /// `None` renders as "-".
 pub fn format_local(ms: Option<i64>) -> String {
@@ -114,10 +127,16 @@ pub fn parse_time(s: &str) -> Result<i64> {
         return local_to_utc_ms(tomorrow.and_time(time));
     }
 
-    // pure time "HH:MM" => today
+    // pure time "HH:MM" => today if still upcoming, otherwise tomorrow
     if s.contains(':') && !s.contains('-') {
         if let Ok(t) = NaiveTime::parse_from_str(s, "%H:%M") {
-            return local_to_utc_ms(now.date_naive().and_time(t));
+            let candidate = local_to_utc_ms(now.date_naive().and_time(t))?;
+            let now_ms = now.with_timezone(&Utc).timestamp_millis();
+            if candidate < now_ms {
+                let tomorrow = (now + Duration::days(1)).date_naive();
+                return local_to_utc_ms(tomorrow.and_time(t));
+            }
+            return Ok(candidate);
         }
     }
 

@@ -101,7 +101,7 @@ impl<'a> AppHandlers for App<'a> {
                 } else {
                     "Theme set to Catppuccin Latte (Light)".to_string()
                 };
-            },
+            }
             KeyCode::Char('h') => {
                 self.pane = match self.pane {
                     Pane::Right => Pane::Center,
@@ -138,7 +138,8 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.show_syntax = !self.show_syntax;
             }
-            KeyCode::Char('p') => self.set_view(View::Projects),
+            KeyCode::Char('T') => self.set_view(View::Today),
+            KeyCode::Char('M') => self.set_view(View::Tomorrow),
             KeyCode::Char('r') => {
                 self.is_reviewing = true;
                 self.review_step = 1;
@@ -148,9 +149,9 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('R') if self.is_reviewing => {
                 self.review_step += 1;
                 match self.review_step {
-                    2 => self.set_view(View::Projects),
-                    3 => self.set_view(View::Waiting),
-                    4 => self.set_view(View::Someday),
+                    2 => self.set_view(View::Waiting),
+                    3 => self.set_view(View::Someday),
+                    4 => self.set_view(View::Done),
                     _ => {
                         self.is_reviewing = false;
                         self.review_step = 0;
@@ -245,36 +246,11 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             }
-            KeyCode::Char('b') => {
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    // 复用规划钩子中的项目归属流程 (空/Esc 跳过)
-                    self.set_mode(Mode::PlanningProject);
-                    self.input.clear();
-                    self.status_message =
-                        format!("{} 归到哪个项目? (空/Esc 跳过)", short_id(&row.id));
-                }
-            }
             KeyCode::Char('W') => {
                 if let Some(row) = self.items.get(self.selected).cloned() {
                     if let Ok(t) = tasks::get(self.conn, &row.id) {
                         self.set_mode(Mode::EditingDelegated);
                         self.input = t.delegated_to.clone().unwrap_or_default();
-                    }
-                }
-            }
-            KeyCode::Char('T') => {
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    if let Ok(t) = tasks::get(self.conn, &row.id) {
-                        if t.kind == task::TaskKind::Project {
-                            self.set_mode(Mode::EditingProjectType);
-                            self.input.clear();
-                            self.status_message = format!(
-                                "{} 项目类型? (parallel/sequential, 空/Esc 跳过)",
-                                short_id(&row.id)
-                            );
-                        } else {
-                            self.status_message = "仅项目可设置项目类型".into();
-                        }
                     }
                 }
             }
@@ -656,22 +632,6 @@ impl<'a> AppHandlers for App<'a> {
                     self.load_detail();
                 }
             }
-            Mode::EditingProjectType => {
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    let inp = input.trim();
-                    if !inp.is_empty() {
-                        match inp.parse::<task::ProjectType>() {
-                            Ok(pt) => {
-                                tasks::set_project_type(self.conn, &row.id, pt)?;
-                                self.status_message = format!("project type {}", short_id(&row.id));
-                            }
-                            Err(e) => self.status_message = format!("bad type: {}", e),
-                        }
-                    }
-                    self.refresh()?;
-                    self.load_detail();
-                }
-            }
             Mode::Capturing => {
                 let raw_input = input.trim();
                 if !raw_input.is_empty() {
@@ -685,8 +645,6 @@ impl<'a> AppHandlers for App<'a> {
                         self.conn,
                         &CaptureInput {
                             title: quick_add.title,
-                            kind: task::TaskKind::Action,
-                            parent_id: None,
                             status: if due_at.is_some() {
                                 task::Status::Scheduled
                             } else {
@@ -808,37 +766,6 @@ impl<'a> AppHandlers for App<'a> {
                         }
                         Err(e) => self.status_message = format!("bad time: {}", e),
                     }
-                }
-            }
-            Mode::PlanningProject => {
-                let name = input.trim();
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    if !name.is_empty() {
-                        // 接受项目 id、id 前缀或标题。
-                        if let Ok(pid) = tasks::resolve_project(self.conn, name) {
-                            tasks::assign_project(self.conn, &row.id, &pid)?;
-                            self.status_message = format!("{} -> project", short_id(&row.id));
-                        } else {
-                            self.status_message = format!("project not found: {}", name);
-                        }
-                        self.refresh()?;
-                        self.load_detail();
-                    }
-                    // 无论是否填了项目，都进入时间步骤（为空则跳过）。
-                    if let Some(row) = self.items.get(self.selected).cloned() {
-                        if let Ok(t) = tasks::get(self.conn, &row.id) {
-                            if Self::needs_time(&t) {
-                                self.set_mode(Mode::PlanningTime);
-                                self.input.clear();
-                                self.status_message =
-                                    format!("{} 预计开始/截止? (空/Esc 跳过)", short_id(&row.id));
-                                return Ok(());
-                            }
-                        }
-                    }
-                    self.set_mode(Mode::Normal);
-                    self.refresh()?;
-                    self.load_detail();
                 }
             }
             Mode::PlanningTime => {

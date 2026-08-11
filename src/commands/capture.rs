@@ -9,7 +9,6 @@ use anyhow::Result;
 /// separates command parsing from the repo-layer `tasks::CaptureInput`.
 pub struct CaptureArgs {
     pub title: String,
-    pub project: Option<String>,
     pub tags: Vec<String>,
     pub p1: bool,
     pub p2: bool,
@@ -34,10 +33,6 @@ pub fn run(conn: &Connection, args: CaptureArgs) -> Result<()> {
         tag_names.push("p3".into());
     }
 
-    let parent_id = match args.project {
-        Some(p) => Some(tasks::resolve_project(conn, &p)?),
-        None => None,
-    };
     let due_at = match args.due {
         Some(d) => Some(time::parse_time(&d)?),
         None => match quick_add.time_str {
@@ -50,8 +45,6 @@ pub fn run(conn: &Connection, args: CaptureArgs) -> Result<()> {
 
     let input = tasks::CaptureInput {
         title: quick_add.title,
-        kind: task::TaskKind::Action,
-        parent_id,
         status: if parsed_status == task::Status::Inbox && due_at.is_some() {
             task::Status::Scheduled
         } else {

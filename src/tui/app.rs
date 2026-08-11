@@ -38,13 +38,14 @@ pub(crate) fn pad_right(s: &str, width: usize) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum View {
     Inbox,
+    Today,
+    Tomorrow,
     Next,
     Waiting,
     Scheduled,
     Someday,
     Reference,
     Done,
-    Projects,
     Review,
     Archived,
     Tags,
@@ -54,13 +55,14 @@ impl View {
     pub(crate) fn label(self) -> &'static str {
         match self {
             View::Inbox => "Inbox",
+            View::Today => "Today",
+            View::Tomorrow => "Tomorrow",
             View::Next => "Next",
             View::Waiting => "Waiting",
             View::Scheduled => "Scheduled",
             View::Someday => "Someday",
             View::Reference => "Reference",
             View::Done => "Done",
-            View::Projects => "Projects",
             View::Review => "Review",
             View::Archived => "Archived",
             View::Tags => "Tags",
@@ -77,7 +79,7 @@ impl View {
             View::Someday => Some("someday"),
             View::Reference => Some("reference"),
             View::Done => Some("done"),
-            View::Projects | View::Review | View::Archived | View::Tags => None,
+            View::Today | View::Tomorrow | View::Review | View::Archived | View::Tags => None,
         }
     }
 
@@ -109,7 +111,6 @@ pub(crate) enum Mode {
     WaitingWho,
     WaitingWhen,
     Search,
-    PlanningProject,
     /// 计划钩子第 2 步：询问预计时间。
     PlanningTime,
     ChecklistAdding,
@@ -123,8 +124,6 @@ pub(crate) enum Mode {
     EditingRrule,
     /// 编辑委派对象 (delegated_to)
     EditingDelegated,
-    /// 编辑项目类型 (project_type, 仅项目)
-    EditingProjectType,
     /// 新增自定义标签
     CreatingTag,
     /// 配置番茄钟时长 (工作;短休;长休)
@@ -238,13 +237,32 @@ impl<'a> App<'a> {
             notified_events: std::collections::HashSet::new(),
         };
         app.refresh()?;
-        
+
         // --- Startup Today Tasks Popup ---
-        let all_tasks = tasks::list(conn, &ListFilter { status: None, project: None, tags: vec![], query: None }).unwrap_or_default();
-        
-        let today_start = chrono::Local::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-        let today_end = chrono::Local::now().date_naive().and_hms_opt(23, 59, 59).unwrap().and_utc().timestamp();
-        
+        let all_tasks = tasks::list(
+            conn,
+            &ListFilter {
+                status: None,
+                tags: vec![],
+                query: None,
+                review_stale: false,
+            },
+        )
+        .unwrap_or_default();
+
+        let today_start = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        let today_end = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(23, 59, 59)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+
         let mut todays = Vec::new();
         for t in &all_tasks {
             if let Some(due) = t.due_at {
@@ -253,7 +271,7 @@ impl<'a> App<'a> {
                 }
             }
         }
-        
+
         if !todays.is_empty() {
             app.popup = Some(Popup::TodayTasks(todays));
         }
@@ -270,35 +288,56 @@ impl<'a> App<'a> {
         }
         self.last_tick_ms = now;
 
-        let all_tasks = tasks::list(self.conn, &ListFilter { status: None, project: None, tags: vec![], query: None }).unwrap_or_default();
+        let all_tasks = tasks::list(
+            self.conn,
+            &ListFilter {
+                status: None,
+                tags: vec![],
+                query: None,
+                review_stale: false,
+            },
+        )
+        .unwrap_or_default();
         for t in all_tasks {
             if let Some(due) = t.due_at {
                 let diff = due - now;
-                
+
                 // 1 hour
-                if diff > 0 && diff <= 3600 && diff > 3540 { 
+                if diff > 0 && diff <= 3600 && diff > 3540 {
                     let key = format!("{}-1h", t.id);
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new().summary("任务即将在1小时后开始").body(&t.title).appname("GTD").show();
+                        let _ = notify_rust::Notification::new()
+                            .summary("任务即将在1小时后开始")
+                            .body(&t.title)
+                            .appname("GTD")
+                            .show();
                     }
                 }
-                
+
                 // 10 mins
-                if diff > 0 && diff <= 600 && diff > 540 { 
+                if diff > 0 && diff <= 600 && diff > 540 {
                     let key = format!("{}-10m", t.id);
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new().summary("任务即将在10分钟后开始").body(&t.title).appname("GTD").show();
+                        let _ = notify_rust::Notification::new()
+                            .summary("任务即将在10分钟后开始")
+                            .body(&t.title)
+                            .appname("GTD")
+                            .show();
                     }
                 }
-                
+
                 // Due now
                 if diff <= 0 && diff > -60 {
                     let key = format!("{}-now", t.id);
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new().summary("任务现在开始!").body(&t.title).appname("GTD").show();
+                        let _ = notify_rust::Notification::new()
+                            .summary("任务现在开始!")
+                            .body(&t.title)
+                            .appname("GTD")
+                            .show();
                         self.popup = Some(Popup::TaskDueNow(t.id.clone(), t.title.clone()));
                         self.needs_clear = true; // force redraw to show popup
                     }
@@ -363,13 +402,13 @@ impl<'a> App<'a> {
             self.conn,
             &ListFilter {
                 status: None,
-                project: None,
                 tags: vec![],
                 query: if self.search_query.is_empty() {
                     None
                 } else {
                     Some(self.search_query.clone())
                 },
+                review_stale: false,
             },
         )
         .unwrap_or(0)
@@ -381,18 +420,20 @@ impl<'a> App<'a> {
                 .map(|t| t.len())
                 .unwrap_or(0),
             View::Tags => tags::list_tags(self.conn).map(|t| t.len()).unwrap_or(0),
+            View::Today => self.day_tasks(0, true).len(),
+            View::Tomorrow => self.day_tasks(1, false).len(),
             _ => match v.status() {
                 Some(s) => tasks::count(
                     self.conn,
                     &ListFilter {
                         status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
-                        project: None,
                         tags: vec![],
                         query: if self.search_query.is_empty() {
                             None
                         } else {
                             Some(self.search_query.clone())
                         },
+                        review_stale: false,
                     },
                 )
                 .unwrap_or(0),
@@ -401,44 +442,60 @@ impl<'a> App<'a> {
         }
     }
 
+    /// 今日/明日视图：所有未完成、未归档任务，其到期/循环发生时间落在指定
+    /// 本地日（含逾期，`include_overdue=true` 时）。返回 (任务, 展示用到期时间)。
+    fn day_tasks(&self, offset_days: i64, include_overdue: bool) -> Vec<(task::Task, i64)> {
+        let (start, end) = crate::time::local_day_bounds(offset_days);
+        let mut tags = vec![];
+        if let Some(ref tf) = self.tag_filter {
+            tags.push(tf.clone());
+        }
+        tasks::list(
+            self.conn,
+            &ListFilter {
+                status: None,
+                tags,
+                query: if self.search_query.is_empty() {
+                    None
+                } else {
+                    Some(self.search_query.clone())
+                },
+                review_stale: false,
+            },
+        )
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| t.status != task::Status::Done)
+        .filter(|t| {
+            crate::commands::occurs_in_window(t, start, end)
+                || (include_overdue
+                    && t.rrule.is_none()
+                    && t.due_at.or(t.scheduled_start_at).is_some_and(|d| d < start))
+        })
+        .map(|t| {
+            let due = crate::commands::window_due(&t, start, end)
+                .or_else(|| crate::commands::effective_due(&t))
+                .unwrap_or(i64::MAX);
+            (t, due)
+        })
+        .collect()
+    }
+
     pub(crate) fn refresh(&mut self) -> Result<()> {
         self.items.clear();
         match self.view {
-            View::Projects => {
-                let projects = tasks::list(
-                    self.conn,
-                    &ListFilter {
-                        status: None,
-                        project: None,
-                        tags: vec![],
-                        query: if self.search_query.is_empty() {
-                            None
-                        } else {
-                            Some(self.search_query.clone())
-                        },
-                    },
-                )?
-                .into_iter()
-                .filter(|t| t.kind == task::TaskKind::Project)
-                .collect::<Vec<_>>();
-                for p in projects {
-                    self.items.push(row_from(&p, 0, self.conn)?);
-                    let actions = tasks::list(
-                        self.conn,
-                        &ListFilter {
-                            status: None,
-                            project: Some(p.id.clone()),
-                            tags: vec![],
-                            query: if self.search_query.is_empty() {
-                                None
-                            } else {
-                                Some(self.search_query.clone())
-                            },
-                        },
-                    )?;
-                    for a in actions {
-                        self.items.push(row_from(&a, 1, self.conn)?);
-                    }
+            View::Today | View::Tomorrow => {
+                let (offset, overdue) = if self.view == View::Today {
+                    (0, true)
+                } else {
+                    (1, false)
+                };
+                let mut ts = self.day_tasks(offset, overdue);
+                ts.sort_by_key(|(_, due)| *due);
+                for (t, due) in ts {
+                    let mut row = row_from(&t, 0, self.conn)?;
+                    row.due = Some(due);
+                    self.items.push(row);
                 }
             }
             View::Archived => {
@@ -462,6 +519,24 @@ impl<'a> App<'a> {
                     }
                 }
             }
+            View::Review => {
+                let ts = tasks::list(
+                    self.conn,
+                    &ListFilter {
+                        status: None,
+                        tags: vec![],
+                        query: if self.search_query.is_empty() {
+                            None
+                        } else {
+                            Some(self.search_query.clone())
+                        },
+                        review_stale: true,
+                    },
+                )?;
+                for t in ts {
+                    self.items.push(row_from(&t, 0, self.conn)?);
+                }
+            }
             _ => {
                 if let Some(s) = self.view.status() {
                     let mut tags = vec![];
@@ -473,13 +548,13 @@ impl<'a> App<'a> {
                         self.conn,
                         &ListFilter {
                             status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
-                            project: None,
                             tags,
                             query: if self.search_query.is_empty() {
                                 None
                             } else {
                                 Some(self.search_query.clone())
                             },
+                            review_stale: false,
                         },
                     )?;
                     for t in ts {
@@ -543,13 +618,14 @@ impl<'a> App<'a> {
     pub(crate) fn next_view(&mut self, delta: isize) {
         let views = [
             View::Inbox,
+            View::Today,
+            View::Tomorrow,
             View::Next,
             View::Waiting,
             View::Scheduled,
             View::Someday,
             View::Reference,
             View::Done,
-            View::Projects,
             View::Review,
             View::Tags,
             View::Archived,
@@ -564,39 +640,17 @@ impl<'a> App<'a> {
         self.set_view(views[next_idx as usize]);
     }
 
-    pub(crate) fn needs_planning(t: &Task) -> bool {
-        let missing_project = t.parent_id.is_none();
-        let missing_time = t.due_at.is_none() && t.scheduled_start_at.is_none();
-        missing_project || missing_time
-    }
-
     pub(crate) fn needs_time(t: &Task) -> bool {
         t.due_at.is_none() && t.scheduled_start_at.is_none()
-    }
-
-    pub(crate) fn planning_hint(t: &Task) -> String {
-        let mut missing = Vec::new();
-        if t.parent_id.is_none() {
-            missing.push("项目");
-        }
-        if Self::needs_time(t) {
-            missing.push("时间");
-        }
-        if missing.is_empty() {
-            String::new()
-        } else {
-            format!("建议补充{} (t 加项目, c 排期)", missing.join("/"))
-        }
     }
 
     pub(crate) fn act_next(&mut self, row: Row) -> Result<()> {
         let t = tasks::transition(self.conn, &row.id, task::Status::Next)?;
         self.status_message = format!("{} -> next", &t.id[..8]);
-        if Self::needs_planning(&t) {
-            self.set_mode(Mode::PlanningProject);
+        if Self::needs_time(&t) {
+            self.set_mode(Mode::PlanningTime);
             self.input.clear();
-            let hint = Self::planning_hint(&t);
-            self.status_message = format!("{} 归到哪个项目? (空/Esc 跳过) {}", &t.id[..8], hint);
+            self.status_message = format!("{} 预计开始/截止? (空/Esc 跳过)", &t.id[..8]);
         } else {
             self.refresh()?;
             self.load_detail();

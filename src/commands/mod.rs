@@ -7,7 +7,7 @@ use anyhow::Result;
 mod capture;
 mod list;
 pub mod pomo;
-mod project;
+mod review;
 mod show;
 mod status;
 mod tagging;
@@ -16,7 +16,6 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
     match cmd {
         Command::Capture {
             title,
-            project,
             tag,
             p1,
             p2,
@@ -28,7 +27,6 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
             conn,
             capture::CaptureArgs {
                 title,
-                project,
                 tags: tag,
                 p1,
                 p2,
@@ -41,17 +39,9 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
         Command::List {
             status,
             tag,
-            project,
             due_before,
             json,
-        } => list::run(
-            conn,
-            status.as_deref(),
-            &tag,
-            project.as_deref(),
-            due_before.as_deref(),
-            json,
-        ),
+        } => list::run(conn, status.as_deref(), &tag, due_before.as_deref(), json),
         Command::Show { id, json } => show::run(conn, &id, json),
         Command::Next { id } => status::to_status(conn, &id, "next"),
         Command::Wait { id } => status::to_status(conn, &id, "waiting"),
@@ -73,9 +63,7 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
         Command::Restore { id } => status::restore(conn, &id),
         Command::Tag { id, name } => tagging::add(conn, &id, &name),
         Command::Untag { id, name } => tagging::remove(conn, &id, &name),
-        Command::Project { name, tag } => project::create(conn, &name, &tag),
-        Command::Tree => project::tree(conn),
-        Command::Review => project::review(conn),
+        Command::Review => review::run(conn),
         Command::Tags => tagging::list(conn),
         Command::Pomo { action, task_id } => match action.as_str() {
             "start" => {
@@ -107,4 +95,27 @@ pub(crate) fn effective_due(task: &Task) -> Option<i64> {
         return Some(start);
     }
     task.due_at.or(task.scheduled_start_at)
+}
+
+/// Whether a task has a due / occurrence (recurring or not) inside the
+/// inclusive `[start, end]` window. For recurring tasks every RRULE occurrence
+/// is considered, not just the next one.
+pub(crate) fn occurs_in_window(task: &Task, start: i64, end: i64) -> bool {
+    window_due(task, start, end).is_some()
+}
+
+/// The first occurrence/due of `task` falling inside `[start, end]` (None if
+/// the task has nothing scheduled in that window).
+pub(crate) fn window_due(task: &Task, start: i64, end: i64) -> Option<i64> {
+    if let (Some(rr), Some(anchor)) = (&task.rrule, task.scheduled_start_at) {
+        if let Ok(occ) = crate::time::rrule_occurrences(rr, anchor, 366) {
+            if let Some(m) = occ.into_iter().find(|m| *m >= start && *m <= end) {
+                return Some(m);
+            }
+        }
+        return None;
+    }
+    task.due_at
+        .or(task.scheduled_start_at)
+        .filter(|d| *d >= start && *d <= end)
 }

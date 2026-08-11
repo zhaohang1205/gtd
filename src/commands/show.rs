@@ -29,7 +29,6 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
 
     println!("Task {}", &task.id);
     println!("  title     : {}", task.title);
-    println!("  kind      : {}", task.kind);
     println!("  status    : {}", task.status);
     println!(
         "  notes     : {}",
@@ -39,9 +38,6 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
             task.notes.clone()
         }
     );
-    if let Some(p) = &task.parent_id {
-        println!("  project   : {}", p);
-    }
     if let Some(rr) = &task.rrule {
         println!("  rrule     : {}", rr);
     }
@@ -50,7 +46,6 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
         time::format_local(Some(task.created_at))
     );
     println!("  clarified : {}", time::format_local(task.clarified_at));
-    println!("  organized : {}", time::format_local(task.organized_at));
     println!("  due       : {}", time::format_local(task.due_at));
     println!(
         "  scheduled : {} -> {}",

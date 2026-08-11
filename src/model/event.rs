@@ -14,7 +14,6 @@ pub struct TaskEvent {
 // Event types (kept as consts so they can't drift from the schema).
 pub const EV_CAPTURED: &str = "captured";
 pub const EV_CLARIFIED: &str = "clarified";
-pub const EV_ORGANIZED: &str = "organized";
 pub const EV_STATUS_CHANGED: &str = "status_changed";
 pub const EV_SCHEDULED: &str = "scheduled";
 pub const EV_DUE: &str = "due";

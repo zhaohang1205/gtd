@@ -11,20 +11,9 @@ pub fn to_status(conn: &Connection, id: &str, to: &str) -> Result<()> {
     let t = tasks::transition(conn, &id, parsed_status)?;
     println!("{} -> {}", &t.id[..8], t.status);
     if to == "next" {
-        let missing_project = t.parent_id.is_none();
         let missing_time = t.due_at.is_none() && t.scheduled_start_at.is_none();
-        if missing_project || missing_time {
-            let mut parts = Vec::new();
-            if missing_project {
-                parts.push("项目");
-            }
-            if missing_time {
-                parts.push("时间");
-            }
-            println!(
-                "  tip: 建议补充{} — `gtp tag <id> <项目>` / `gtp schedule <id> --start <时间>`",
-                parts.join("/")
-            );
+        if missing_time {
+            println!("  tip: 建议补充时间 — `gtp schedule <id> --start <时间>`");
         }
     }
     Ok(())

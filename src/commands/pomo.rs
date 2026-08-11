@@ -80,13 +80,13 @@ pub fn waybar() -> Result<()> {
     }
     let m = diff / 60;
     let s = diff % 60;
-    
+
     let icon = match state.phase {
         Phase::Work => "🍅",
         Phase::ShortBreak | Phase::LongBreak => "☕",
         Phase::Idle => "🍅",
     };
-    
+
     let title = state.task_title.as_deref().unwrap_or("");
     let text = if title.is_empty() {
         format!("{} {:02}:{:02}", icon, m, s)
@@ -105,11 +105,7 @@ pub fn waybar() -> Result<()> {
         Phase::LongBreak => "long_break",
         Phase::Idle => "idle",
     };
-    let tooltip = format!(
-        "{} - {:?}",
-        title,
-        state.phase
-    );
+    let tooltip = format!("{} - {:?}", title, state.phase);
     println!(
         "{}",
         serde_json::json!({

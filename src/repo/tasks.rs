@@ -7,18 +7,15 @@ use crate::model::task::{self, Task};
 use crate::repo::log_event;
 use crate::time;
 use anyhow::Result;
-use chrono::TimeZone;
 
-/// Input for creating a task (capture / project).
+/// Input for creating a task (capture).
 pub struct CaptureInput {
     pub title: String,
-    pub kind: task::TaskKind, // 'action' | 'project'
-    pub parent_id: Option<String>,
     pub status: task::Status,
     pub due_at: Option<i64>,
     pub tag_names: Vec<String>,
+    pub rrule: Option<String>,
     pub delegated_to: Option<String>,
-    pub project_type: Option<task::ProjectType>,
     pub checklist: Vec<task::ChecklistItem>,
 }
 
@@ -26,13 +23,11 @@ impl Default for CaptureInput {
     fn default() -> Self {
         Self {
             title: String::new(),
-            kind: task::TaskKind::Action,
-            parent_id: None,
             status: task::Status::Inbox,
             due_at: None,
             tag_names: Vec::new(),
+            rrule: None,
             delegated_to: None,
-            project_type: None,
             checklist: Vec::new(),
         }
     }
@@ -40,9 +35,9 @@ impl Default for CaptureInput {
 
 pub fn get(conn: &Connection, id: &str) -> Result<Task> {
     let mut stmt = conn.prepare(
-        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
+        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,project_type,checklist \
+                delegated_to,checklist \
          FROM tasks WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map([id], row_to_task)?;
@@ -60,36 +55,24 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
     } else {
         None
     };
-    let organized = if input.parent_id.is_some() {
-        Some(now)
-    } else {
-        None
-    };
 
-    let pt_str = input
-        .project_type
-        .unwrap_or(task::ProjectType::Parallel)
-        .to_string();
     let cl_str = serde_json::to_string(&input.checklist).unwrap_or_else(|_| "[]".to_string());
 
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "INSERT INTO tasks \
-         (id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,due_at,updated_at,delegated_to,project_type,checklist) \
-         VALUES (?1,?2,'',?3,?4,?5,NULL,?6,?7,?8,?9,?10,?11,?12,?13)",
+         (id,title,notes,status,rrule,created_at,clarified_at,due_at,updated_at,delegated_to,checklist) \
+         VALUES (?1,?2,'',?3,?4,?5,?6,?7,?8,?9,?10)",
         rusqlite::params![
             id,
             input.title,
-            input.kind.to_string(),
-            input.parent_id,
             status.to_string(),
+            input.rrule,
             now,
             clarified,
-            organized,
             input.due_at,
             now,
             input.delegated_to,
-            pt_str,
             cl_str
         ],
     )?;
@@ -97,9 +80,6 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
     log_event(&tx, &id, event::EV_CAPTURED, None, Some(&status_str), None)?;
     if clarified.is_some() {
         log_event(&tx, &id, event::EV_CLARIFIED, None, Some(&status_str), None)?;
-    }
-    if organized.is_some() {
-        log_event(&tx, &id, event::EV_ORGANIZED, None, Some(&status_str), None)?;
     }
 
     for tag in &input.tag_names {
@@ -175,14 +155,6 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
         t.clarified_at = Some(now);
     }
 
-    if t.kind == task::TaskKind::Project
-        && t.started_at.is_none()
-        && to_status != task::Status::Inbox
-        && to_status != task::Status::Someday
-    {
-        t.started_at = Some(now);
-    }
-
     let tx = conn.unchecked_transaction()?;
 
     if to_status == task::Status::Done {
@@ -236,20 +208,6 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
     log_event(&tx, id, ev, Some(&from_str), Some(&to_str), None)?;
     tx.commit()?;
     Ok(t)
-}
-
-/// Attach a task to a project (set `parent_id`) and record an `organized` event.
-pub fn assign_project(conn: &Connection, id: &str, project_id: &str) -> Result<Task> {
-    let _ = get(conn, id)?;
-    let now = time::now_ms();
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE tasks SET parent_id=?1, organized_at=?2, updated_at=?3 WHERE id=?4",
-        rusqlite::params![project_id, now, now, id],
-    )?;
-    log_event(&tx, id, event::EV_ORGANIZED, None, None, None)?;
-    tx.commit()?;
-    get(conn, id)
 }
 
 /// Set a soft deadline (`due_at`) without changing the task status. Used by the
@@ -306,20 +264,6 @@ pub fn set_delegated(conn: &Connection, id: &str, who: Option<String>) -> Result
     tx.execute(
         "UPDATE tasks SET delegated_to=?1, updated_at=?2 WHERE id=?3",
         rusqlite::params![t.delegated_to, t.updated_at, id],
-    )?;
-    tx.commit()?;
-    Ok(t)
-}
-
-/// Set a project's type (Parallel / Sequential).
-pub fn set_project_type(conn: &Connection, id: &str, pt: task::ProjectType) -> Result<Task> {
-    let mut t = get(conn, id)?;
-    t.project_type = pt;
-    t.updated_at = time::now_ms();
-    let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "UPDATE tasks SET project_type=?1, updated_at=?2 WHERE id=?3",
-        rusqlite::params![t.project_type.to_string(), t.updated_at, id],
     )?;
     tx.commit()?;
     Ok(t)
@@ -402,9 +346,9 @@ pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
 /// List only archived (soft-deleted) tasks, for the restore UI.
 pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
-        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
+        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,project_type,checklist \
+                delegated_to,checklist \
          FROM tasks WHERE archived_at IS NOT NULL \
          ORDER BY archived_at DESC",
     )?;
@@ -416,49 +360,18 @@ pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
     Ok(out)
 }
 
-/// Count tasks completed per day for the last `n` days (including today),
-/// keyed by local calendar date (YYYY-MM-DD, oldest first). Used by the
-/// Weekly Review trend chart. Only counts tasks whose status is `done`.
-pub fn completed_counts_last_days(conn: &Connection, n: usize) -> Result<Vec<(String, usize)>> {
-    let mut stmt = conn.prepare(
-        "SELECT completed_at FROM tasks \
-         WHERE status='done' AND completed_at IS NOT NULL AND archived_at IS NULL",
-    )?;
-    let rows = stmt.query_map([], |r| r.get::<usize, i64>(0))?;
-    let completed: Vec<i64> = rows.map(|r| r.unwrap_or(0)).collect();
-
-    let today = chrono::Local::now().date_naive();
-    let mut out: Vec<(String, usize)> = Vec::with_capacity(n);
-    for i in (0..n).rev() {
-        let date = today - chrono::Duration::days(i as i64);
-        let key = date.format("%m-%d").to_string();
-        let day_start = chrono::Local
-            .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-            .single()
-            .map(|dt| dt.with_timezone(&chrono::Utc).timestamp_millis())
-            .unwrap_or(0);
-        let day_end = day_start + 24 * 3600 * 1000;
-        let count = completed
-            .iter()
-            .filter(|&&c| c >= day_start && c < day_end)
-            .count();
-        out.push((key, count));
-    }
-    Ok(out)
-}
-
 pub struct ListFilter {
     pub status: Option<task::Status>,
-    pub project: Option<String>, // project id or name
     pub tags: Vec<String>,
     pub query: Option<String>,
+    pub review_stale: bool,
 }
 
 pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
     let mut sql = String::from(
-        "SELECT id,title,notes,kind,parent_id,status,rrule,created_at,clarified_at,organized_at,\
+        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,project_type,checklist \
+                delegated_to,checklist \
          FROM tasks WHERE archived_at IS NULL",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -466,10 +379,10 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
         sql.push_str(" AND status = ?");
         params.push(Box::new(s.to_string()));
     }
-    if let Some(p) = &f.project {
-        let pid = resolve_project(conn, p)?;
-        sql.push_str(" AND parent_id = ?");
-        params.push(Box::new(pid));
+    if f.review_stale {
+        let seven_days_ago = crate::time::now_ms() - 7 * 24 * 3600 * 1000;
+        sql.push_str(" AND (updated_at < ? OR updated_at IS NULL)");
+        params.push(Box::new(seven_days_ago));
     }
     for tag in &f.tags {
         sql.push_str(
@@ -504,11 +417,6 @@ pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
         sql.push_str(" AND status = ?");
         params.push(Box::new(s.to_string()));
     }
-    if let Some(p) = &f.project {
-        let pid = resolve_project(conn, p)?;
-        sql.push_str(" AND parent_id = ?");
-        params.push(Box::new(pid));
-    }
     for tag in &f.tags {
         sql.push_str(
             " AND id IN (SELECT task_id FROM task_tags tt JOIN tags g ON g.id=tt.tag_id WHERE g.name = ?)",
@@ -525,25 +433,6 @@ pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let c: usize = stmt.query_row(param_refs.as_slice(), |r| r.get(0))?;
     Ok(c)
-}
-
-/// Resolve a project reference (id, id-prefix, or title) to its project id.
-pub fn resolve_project(conn: &Connection, key: &str) -> Result<String> {
-    // try as task id (exact or unique prefix)
-    if let Ok(id) = resolve_id(conn, key) {
-        let t = get(conn, &id)?;
-        if t.kind == task::TaskKind::Project {
-            return Ok(t.id);
-        }
-    }
-    // try by title
-    let mut stmt =
-        conn.prepare("SELECT id FROM tasks WHERE kind='project' AND title = ?1 LIMIT 1")?;
-    let mut rows = stmt.query_map([key], |r| r.get::<usize, String>(0))?;
-    if let Some(id) = rows.next().transpose()? {
-        return Ok(id);
-    }
-    Err(Error::ProjectNotFound(key.to_string()).into())
 }
 
 pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>> {
@@ -570,36 +459,28 @@ pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>>
 }
 
 fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
-    let kind_str: String = r.get(3)?;
-    let status_str: String = r.get(5)?;
-    let delegated_to: Option<String> = r.get(17)?;
-    let pt_str: String = r.get(18)?;
-    let cl_str: String = r.get(19)?;
+    let status_str: String = r.get(3)?;
+    let delegated_to: Option<String> = r.get(14)?;
+    let cl_str: String = r.get(15)?;
 
     Ok(Task {
         id: r.get(0)?,
         title: r.get(1)?,
         notes: r.get(2)?,
-        kind: kind_str
-            .parse()
-            .unwrap_or(crate::model::task::TaskKind::Action),
-        parent_id: r.get(4)?,
         status: status_str
             .parse()
             .unwrap_or(crate::model::task::Status::Inbox),
-        rrule: r.get(6)?,
-        created_at: r.get(7)?,
-        clarified_at: r.get(8)?,
-        organized_at: r.get(9)?,
-        due_at: r.get(10)?,
-        scheduled_start_at: r.get(11)?,
-        scheduled_end_at: r.get(12)?,
-        started_at: r.get(13)?,
-        completed_at: r.get(14)?,
-        archived_at: r.get(15)?,
-        updated_at: r.get(16)?,
+        rrule: r.get(4)?,
+        created_at: r.get(5)?,
+        clarified_at: r.get(6)?,
+        due_at: r.get(7)?,
+        scheduled_start_at: r.get(8)?,
+        scheduled_end_at: r.get(9)?,
+        started_at: r.get(10)?,
+        completed_at: r.get(11)?,
+        archived_at: r.get(12)?,
+        updated_at: r.get(13)?,
         delegated_to,
-        project_type: pt_str.parse().unwrap_or_default(),
         checklist: serde_json::from_str(&cl_str).unwrap_or_default(),
     })
 }

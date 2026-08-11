@@ -13,8 +13,6 @@ pub enum Command {
     Capture {
         title: String,
         #[arg(long)]
-        project: Option<String>,
-        #[arg(long)]
         tag: Vec<String>,
         #[arg(long)]
         p1: bool,
@@ -35,8 +33,6 @@ pub enum Command {
         status: Option<String>,
         #[arg(long)]
         tag: Vec<String>,
-        #[arg(long)]
-        project: Option<String>,
         #[arg(long)]
         due_before: Option<String>,
         #[arg(long)]
@@ -74,14 +70,6 @@ pub enum Command {
     Tag { id: String, name: String },
     /// Remove a tag from a task
     Untag { id: String, name: String },
-    /// Create a project
-    Project {
-        name: String,
-        #[arg(long)]
-        tag: Vec<String>,
-    },
-    /// Show projects and their actions as a tree
-    Tree,
     /// Weekly review helper
     Review,
     /// List all tags grouped by category

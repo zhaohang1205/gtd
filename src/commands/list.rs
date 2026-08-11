@@ -10,15 +10,14 @@ pub fn run(
     conn: &Connection,
     status: Option<&str>,
     tags_filter: &[String],
-    project: Option<&str>,
     due_before: Option<&str>,
     json: bool,
 ) -> Result<()> {
     let f = tasks::ListFilter {
         status: status.map(|s| s.parse().unwrap()),
-        project: project.map(|s| s.to_string()),
         tags: tags_filter.to_vec(),
         query: None,
+        review_stale: false,
     };
     let mut tasks_vec = tasks::list(conn, &f)?;
 

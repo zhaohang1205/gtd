@@ -26,7 +26,6 @@ pub(crate) trait AppRender {
     fn render_guide(&self, f: &mut Frame, area: Rect);
     fn render_list(&mut self, f: &mut Frame, area: Rect);
     fn render_detail(&mut self, f: &mut Frame, area: Rect);
-    fn render_review(&mut self, f: &mut Frame, area: Rect);
 }
 
 impl<'a> AppRender for App<'a> {
@@ -53,9 +52,9 @@ impl<'a> AppRender for App<'a> {
             let step_names = [
                 "",
                 "清空收件箱",
-                "检视项目",
                 "追踪等待事项",
                 "重估将来/也许",
+                "检视已完成",
             ];
             let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
 
@@ -147,16 +146,7 @@ impl<'a> AppRender for App<'a> {
             self.render_help_drawer(f, left_chunks[1]);
         }
 
-        match self.view {
-            View::Review => self.render_review(f, body[1]),
-            _ => {
-                if self.is_reviewing {
-                    self.render_review(f, body[1]);
-                } else {
-                    self.render_list(f, body[1]);
-                }
-            }
-        }
+        self.render_list(f, body[1]);
         self.render_detail(f, body[2]);
 
         // 状态栏 (Statusline)
@@ -197,7 +187,9 @@ impl<'a> AppRender for App<'a> {
         let status_right = Line::from(vec![
             Span::styled(
                 status_msg,
-                Style::default().fg(self.theme.status_fg).bg(self.theme.status_bg),
+                Style::default()
+                    .fg(self.theme.status_fg)
+                    .bg(self.theme.status_bg),
             ),
             Span::styled(
                 " gtp ".to_string(),
@@ -243,7 +235,6 @@ impl<'a> AppRender for App<'a> {
                 Mode::SchedulingCalendar => "", // Not reached
                 Mode::WaitingWho => " Waiting for who/what? ",
                 Mode::WaitingWhen => " Reminder time? (e.g. +1d, tomorrow 10:00) ",
-                Mode::PlanningProject => " Project? ",
                 Mode::PlanningTime => " Time? ",
                 Mode::ChecklistAdding => " 新增检查单 ",
                 Mode::FilteringTag => " 过滤标签 (Context) ",
@@ -251,7 +242,6 @@ impl<'a> AppRender for App<'a> {
                 Mode::EditingDue => " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
                 Mode::EditingRrule => " 循环规则? (空=清除, 如 FREQ=WEEKLY;BYDAY=SA,SU) ",
                 Mode::EditingDelegated => " 委派给? (空=清除) ",
-                Mode::EditingProjectType => " 项目类型? (parallel/sequential) ",
                 Mode::ConfiguringPomo => {
                     " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) "
                 }
@@ -283,8 +273,13 @@ impl<'a> AppRender for App<'a> {
                 let block = Block::default()
                     .title(title)
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(if self.pane == Pane::Right { self.theme.border_active } else { self.theme.border_inactive }));
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(if self.pane == Pane::Right {
+                        self.theme.border_active
+                    } else {
+                        self.theme.border_inactive
+                    }));
                 f.render_widget(Paragraph::new(text_lines).block(block), left_area);
             } else {
                 let area = self.centered_rect(width, height, size);
@@ -292,7 +287,8 @@ impl<'a> AppRender for App<'a> {
                 let block = Block::default()
                     .title(title)
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(self.theme.accent));
                 f.render_widget(Paragraph::new(text_lines).block(block), area);
             }
@@ -329,8 +325,11 @@ impl<'a> AppRender for App<'a> {
                         lines.push(Line::from(format!("   ... 等 {} 个任务", tasks.len())));
                     }
                     lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(" [按 Enter 或 Esc 键关闭] ", Style::default().fg(self.theme.text_dim))));
-                    
+                    lines.push(Line::from(Span::styled(
+                        " [按 Enter 或 Esc 键关闭] ",
+                        Style::default().fg(self.theme.text_dim),
+                    )));
+
                     let area = self.centered_rect(50, 15, size);
                     f.render_widget(ratatui::widgets::Clear, area);
                     let block = Block::default()
@@ -338,15 +337,28 @@ impl<'a> AppRender for App<'a> {
                         .borders(Borders::ALL)
                         .border_set(border::ROUNDED)
                         .border_style(Style::default().fg(self.theme.accent));
-                    f.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+                    f.render_widget(
+                        Paragraph::new(lines)
+                            .block(block)
+                            .alignment(Alignment::Center),
+                        area,
+                    );
                 }
                 crate::tui::app::Popup::TaskDueNow(_, title) => {
                     let mut lines = vec![Line::from("有任务已到期，需要立即处理：")];
                     lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(format!(" 「{}」 ", title), Style::default().fg(self.theme.text_urgent).add_modifier(Modifier::BOLD))));
+                    lines.push(Line::from(Span::styled(
+                        format!(" 「{}」 ", title),
+                        Style::default()
+                            .fg(self.theme.text_urgent)
+                            .add_modifier(Modifier::BOLD),
+                    )));
                     lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(" [Enter] 一键进入番茄钟  |  [Esc] 忽略 ", Style::default().fg(self.theme.text_dim))));
-                    
+                    lines.push(Line::from(Span::styled(
+                        " [Enter] 一键进入番茄钟  |  [Esc] 忽略 ",
+                        Style::default().fg(self.theme.text_dim),
+                    )));
+
                     let area = self.centered_rect(50, 10, size);
                     f.render_widget(ratatui::widgets::Clear, area);
                     let block = Block::default()
@@ -354,7 +366,12 @@ impl<'a> AppRender for App<'a> {
                         .borders(Borders::ALL)
                         .border_set(border::ROUNDED)
                         .border_style(Style::default().fg(self.theme.text_urgent));
-                    f.render_widget(Paragraph::new(lines).block(block).alignment(Alignment::Center), area);
+                    f.render_widget(
+                        Paragraph::new(lines)
+                            .block(block)
+                            .alignment(Alignment::Center),
+                        area,
+                    );
                 }
             }
         }
@@ -382,7 +399,7 @@ impl<'a> AppRender for App<'a> {
         let (phase_icon, ring_color, dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
                 "🍅 专注",
-                Color::Rgb(230, 60, 60), 
+                Color::Rgb(230, 60, 60),
                 Color::Rgb(70, 25, 25),
                 self.theme.bg,
             ),
@@ -421,9 +438,17 @@ impl<'a> AppRender for App<'a> {
         // ── 1. 当前任务与状态 ──
         let task_title = pomo.task_title.as_deref().unwrap_or("无标题");
         let title_line = Line::from(vec![
-            Span::styled(format!(" {} ", phase_icon), Style::default().fg(ring_color).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!(" {} ", phase_icon),
+                Style::default().fg(ring_color).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(" │ ", Style::default().fg(self.theme.text_dim)),
-            Span::styled(task_title, Style::default().fg(self.theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                task_title,
+                Style::default()
+                    .fg(self.theme.fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]);
         f.render_widget(
             Paragraph::new(title_line)
@@ -523,13 +548,19 @@ impl<'a> AppRender for App<'a> {
         } else {
             "󰄾 [S] 停止番茄钟"
         };
-        
+
         let stats_line = Line::from(vec![
-            Span::styled(format!(" 🏆 今日完成: {} ", pomo.today_count), Style::default().fg(self.theme.text_dim)),
+            Span::styled(
+                format!(" 🏆 今日完成: {} ", pomo.today_count),
+                Style::default().fg(self.theme.text_dim),
+            ),
             Span::styled(" • ", Style::default().fg(self.theme.text_dim)),
-            Span::styled(format!(" 🔥 连击: {} ", pomo.streak), Style::default().fg(self.theme.text_dim)),
+            Span::styled(
+                format!(" 🔥 连击: {} ", pomo.streak),
+                Style::default().fg(self.theme.text_dim),
+            ),
         ]);
-        
+
         f.render_widget(
             Paragraph::new(stats_line)
                 .alignment(Alignment::Center)
@@ -549,13 +580,15 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(ratatui::widgets::Clear, area);
         let keys_block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+            .border_set(border::ROUNDED)
+            .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(self.theme.accent))
             .title(" 快捷键指南 (F1/?) ");
         let keys = [
             ("h/l", "切换面板 (左/中/右栏)"),
             ("j/k", "上下移动列表选项"),
             ("1-9", "切换视图 (9=标签库, 8=归档箱)"),
+            ("T/M", "今日 / 明日视图"),
             ("/", "全局搜索 (标题与备注)"),
             ("f", "情境/标签过滤 (Context)"),
             ("a", "快速捕获任务 (Inbox)"),
@@ -563,11 +596,8 @@ impl<'a> AppRender for App<'a> {
             ("e", "编辑任务标题"),
             ("d", "修改截止时间 (due)"),
             ("L", "修改循环规则 (rrule)"),
-            ("b", "修改归属项目 (Project)"),
             ("W", "修改委派对象 (Delegated)"),
-            ("T", "修改项目类型 (Parallel/Seq)"),
             ("C", "新增检查单项 / SPC 勾选"),
-            ("p", "切换到项目树视图"),
             ("r", "开启每周回顾 Hook"),
             ("Enter", "理清任务 / 标记下一步"),
             ("c", "日历排期 (Schedule)"),
@@ -610,7 +640,8 @@ impl<'a> AppRender for App<'a> {
         f.render_widget(ratatui::widgets::Clear, area);
         let syntax_block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+            .border_set(border::ROUNDED)
+            .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(self.theme.accent))
             .title(" 语法说明指南 (Ctrl+P) ");
         let syntax = vec![
@@ -653,7 +684,10 @@ impl<'a> AppRender for App<'a> {
             )),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("now / +2h +30m +1d +1w", Style::default().fg(self.theme.text_success)),
+                Span::styled(
+                    "now / +2h +30m +1d +1w",
+                    Style::default().fg(self.theme.text_success),
+                ),
                 Span::raw("    相对时间偏移"),
             ]),
             Line::from(vec![
@@ -671,7 +705,10 @@ impl<'a> AppRender for App<'a> {
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("YYYY-MM-DD [HH:MM]", Style::default().fg(self.theme.text_success)),
+                Span::styled(
+                    "YYYY-MM-DD [HH:MM]",
+                    Style::default().fg(self.theme.text_success),
+                ),
                 Span::raw("        绝对日期与时间"),
             ]),
             Line::from(""),
@@ -846,13 +883,14 @@ impl<'a> AppRender for App<'a> {
                 let active = cur == *v;
                 let (icon, label) = match v {
                     View::Inbox => ("", "收件箱"),
+                    View::Today => ("", "今日"),
+                    View::Tomorrow => ("", "明日"),
                     View::Next => ("", "下一步"),
                     View::Waiting => ("", "等待中"),
                     View::Scheduled => ("", "已排程"),
                     View::Someday => ("", "将来/也许"),
                     View::Reference => ("", "参考资料"),
                     View::Done => ("", "已完成"),
-                    View::Projects => ("", "项目树"),
                     View::Review => ("", "周回顾"),
                     View::Archived => ("", "归档箱"),
                     View::Tags => ("", "标签库"),
@@ -872,7 +910,10 @@ impl<'a> AppRender for App<'a> {
                     )));
                 } else {
                     lines.push(Line::from(vec![
-                        Span::styled(format!("   {} ", key), Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            format!("   {} ", key),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
                         Span::raw(format!("{} {} {:>3} ", icon, padded_label, cnt)),
                     ]));
                 }
@@ -880,6 +921,7 @@ impl<'a> AppRender for App<'a> {
             lines.push(Line::from(""));
         };
 
+        add_group(&[('T', View::Today), ('M', View::Tomorrow)], "  [Day]");
         add_group(&[('1', View::Inbox), ('2', View::Next)], "  [Active]");
         add_group(
             &[
@@ -898,14 +940,12 @@ impl<'a> AppRender for App<'a> {
                 .add_modifier(Modifier::BOLD),
         )));
         for (key, v) in &[
-            ('p', View::Projects),
             ('r', View::Review),
             ('9', View::Tags),
             ('8', View::Archived),
         ] {
             let active = cur == *v;
             let (icon, label) = match v {
-                View::Projects => ("", "项目树"),
                 View::Review => ("", "周回顾"),
                 View::Archived => ("", "归档箱"),
                 View::Tags => ("", "标签库"),
@@ -925,7 +965,10 @@ impl<'a> AppRender for App<'a> {
                 )));
             } else {
                 lines.push(Line::from(vec![
-                    Span::styled(format!("   {} ", key), Style::default().fg(self.theme.text_dim)),
+                    Span::styled(
+                        format!("   {} ", key),
+                        Style::default().fg(self.theme.text_dim),
+                    ),
                     Span::raw(format!("{} {}     ", icon, padded_label)),
                 ]));
             }
@@ -953,7 +996,8 @@ impl<'a> AppRender for App<'a> {
             Paragraph::new(lines).block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(border_color))
                     .title(" Guide "),
             ),
@@ -981,12 +1025,16 @@ impl<'a> AppRender for App<'a> {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(border_color))
                     .title(title),
             )
             .highlight_style(if self.pane == Pane::Center {
-                Style::default().bg(self.theme.hl_bg).fg(self.theme.hl_fg).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .bg(self.theme.hl_bg)
+                    .fg(self.theme.hl_fg)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 Style::default().bg(self.theme.hl_bg)
             });
@@ -1002,7 +1050,8 @@ impl<'a> AppRender for App<'a> {
         };
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
+            .border_set(border::ROUNDED)
+            .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(border_color))
             .title(" 任务详情 ");
 
@@ -1010,7 +1059,11 @@ impl<'a> AppRender for App<'a> {
             None => {
                 let empty_para = Paragraph::new("\n\n󰋔\n\n未选中任务")
                     .alignment(Alignment::Center)
-                    .style(Style::default().fg(self.theme.text_dim).add_modifier(Modifier::ITALIC))
+                    .style(
+                        Style::default()
+                            .fg(self.theme.text_dim)
+                            .add_modifier(Modifier::ITALIC),
+                    )
                     .block(block);
                 f.render_widget(empty_para, area);
             }
@@ -1040,14 +1093,6 @@ impl<'a> AppRender for App<'a> {
                         Style::default().fg(st_color).add_modifier(Modifier::BOLD),
                     ),
                 ]));
-
-                // 项目
-                if let Some(p) = &d.task.parent_id {
-                    lines.push(Line::from(vec![
-                        Span::styled("项目: ", Style::default().fg(self.theme.text_dim)),
-                        Span::raw(p[..8].to_string()),
-                    ]));
-                }
 
                 // 截止时间
                 lines.push(Line::from(vec![
@@ -1084,8 +1129,10 @@ impl<'a> AppRender for App<'a> {
 
                 // 标签
                 if !d.tags.is_empty() {
-                    let mut tag_spans =
-                        vec![Span::styled("标签: ", Style::default().fg(self.theme.text_dim))];
+                    let mut tag_spans = vec![Span::styled(
+                        "标签: ",
+                        Style::default().fg(self.theme.text_dim),
+                    )];
                     for (i, tg) in d.tags.iter().enumerate() {
                         let c = ui::priority_color(&tg.name).unwrap_or(Color::Cyan);
                         tag_spans.push(Span::styled(
@@ -1107,40 +1154,8 @@ impl<'a> AppRender for App<'a> {
                     ]));
                 }
 
-                // 检查单 / 进度
-                if d.task.kind == task::TaskKind::Project {
-                    let children = tasks::list(
-                        self.conn,
-                        &ListFilter {
-                            status: None,
-                            project: Some(d.task.id.clone()),
-                            tags: vec![],
-                            query: None,
-                        },
-                    )
-                    .unwrap_or_default();
-                    let total = children.len();
-                    let done = children
-                        .iter()
-                        .filter(|c| c.status == task::Status::Done)
-                        .count();
-                    let bar = if total > 0 {
-                        let filled = (done as f64 / total as f64 * 10.0).round() as usize;
-                        format!(
-                            "[{}{}] {}/{}",
-                            "█".repeat(filled),
-                            "░".repeat(10 - filled),
-                            done,
-                            total
-                        )
-                    } else {
-                        "[----------] 0/0".to_string()
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled("进度: ", Style::default().fg(self.theme.text_dim)),
-                        Span::styled(bar, Style::default().fg(self.theme.text_success)),
-                    ]));
-                } else if !d.task.checklist.is_empty() {
+                // 检查单
+                if !d.task.checklist.is_empty() {
                     lines.push(Line::from(Span::styled(
                         "检查单:",
                         Style::default().fg(self.theme.text_dim),
@@ -1250,80 +1265,6 @@ impl<'a> AppRender for App<'a> {
             }
         }
     }
-
-    fn render_review(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-        let all = tasks::list(
-            self.conn,
-            &ListFilter {
-                status: None,
-                project: None,
-                tags: vec![],
-                query: None,
-            },
-        )
-        .unwrap_or_default();
-        let c = |s: &str| all.iter().filter(|t| t.status.to_string() == s).count();
-
-        // 左右分栏：左=状态分布，右=近7天完成趋势图
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
-            .split(area);
-
-        // 左：状态分布
-        let lines = vec![
-            Line::from(Span::styled(
-                " 状态分布",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Line::from(""),
-            Line::from(format!(" 收件箱   : {}", c("inbox"))),
-            Line::from(format!(" 下一步   : {}", c("next"))),
-            Line::from(format!(" 等待中   : {}", c("waiting"))),
-            Line::from(format!(" 已排程   : {}", c("scheduled"))),
-            Line::from(format!(" 将来/也许: {}", c("someday"))),
-            Line::from(format!(" 参考资料 : {}", c("reference"))),
-            Line::from(format!(" 已完成   : {}", c("done"))),
-        ];
-        let para = Paragraph::new(lines).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
-                .border_style(Style::default().fg(if self.pane == Pane::Left { self.theme.border_active } else { self.theme.border_inactive }))
-                .title(" Review "),
-        );
-        f.render_widget(para, chunks[0]);
-
-        // 右：近7天完成趋势
-        let data = tasks::completed_counts_last_days(self.conn, 7).unwrap_or_default();
-        let labels: Vec<String> = data.iter().map(|(d, _)| d.clone()).collect();
-        let values: Vec<u64> = data.iter().map(|(_, n)| *n as u64).collect();
-        let maxv = values.iter().cloned().max().unwrap_or(0).max(1);
-        let chart_data: Vec<(&str, u64)> = labels
-            .iter()
-            .map(|s| s.as_str())
-            .zip(values.iter().cloned())
-            .collect();
-        let chart = ratatui::widgets::BarChart::default()
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_set(border::ROUNDED).padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(if self.pane == Pane::Center { self.theme.border_active } else { self.theme.border_inactive }))
-                    .title(" 近7天完成趋势 "),
-            )
-            .data(&chart_data)
-            .bar_width(6)
-            .bar_style(Style::default().fg(self.theme.text_success))
-            .value_style(
-                Style::default()
-                    .fg(self.theme.fg)
-                    .add_modifier(Modifier::BOLD),
-            )
-            .label_style(Style::default().fg(self.theme.text_dim))
-            .max(maxv);
-        f.render_widget(chart, chunks[1]);
-    }
 }
 
 // ── 大数字字体辅助（5 行 × 4 列，纯 █ 字符）──
@@ -1340,7 +1281,13 @@ fn big_digit_rows(c: char, blink: bool) -> [&'static str; 5] {
         '7' => ["████", "   █", "  █ ", " █  ", " █  "],
         '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
         '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
-        ':' => if blink { ["    ", " ██ ", "    ", " ██ ", "    "] } else { ["    ", "    ", "    ", "    ", "    "] },
+        ':' => {
+            if blink {
+                ["    ", " ██ ", "    ", " ██ ", "    "]
+            } else {
+                ["    ", "    ", "    ", "    ", "    "]
+            }
+        }
         _ => ["    ", "    ", "    ", "    ", "    "],
     }
 }
