@@ -79,6 +79,12 @@ pub enum Command {
         action: String,
         task_id: Option<String>,
     },
+    /// Upcoming-task alarm reminders (waybar, next)
+    Alarm {
+        action: String,
+        /// 槽位 1/2: waybar 多闹铃模块定位; `next` 时表示跳过第几个
+        slot: Option<usize>,
+    },
     /// Launch the interactive TUI
     Tui,
 }

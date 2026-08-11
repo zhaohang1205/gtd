@@ -4,6 +4,7 @@ use crate::cli::Command;
 use crate::model::task::Task;
 use anyhow::Result;
 
+mod alarm;
 mod capture;
 mod list;
 pub mod pomo;
@@ -77,6 +78,11 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
             "daemon" => pomo::daemon(),
             "waybar" => pomo::waybar(),
             _ => anyhow::bail!("unknown pomo action"),
+        },
+        Command::Alarm { action, slot } => match action.as_str() {
+            "waybar" => alarm::waybar(slot),
+            "next" => alarm::next(slot),
+            _ => anyhow::bail!("unknown alarm action"),
         },
         Command::Tui => crate::tui::run(conn),
     }

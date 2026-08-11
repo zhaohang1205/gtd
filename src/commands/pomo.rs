@@ -212,7 +212,7 @@ pub fn daemon() -> Result<()> {
     }
 }
 
-fn notify(summary: &str, body: &str) {
+pub(crate) fn notify(summary: &str, body: &str) {
     // 桌面图形通知（同步，通常很快）
     let _ = StdCommand::new("notify-send")
         .args(["-u", "normal", "-i", "appointment-soon", summary, body])
