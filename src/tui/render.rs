@@ -2,8 +2,10 @@ use super::app::{pad_right, App, Mode, Pane, View};
 use super::ui;
 use super::ui::build_list_items;
 use super::{next_hint, status_cn};
-use crate::model::{event, task};
-use crate::repo::tasks::{self, ListFilter};
+use crate::model::event;
+use crate::parser::{
+    parse_quick_add, parse_rrule_shorthand, priority_letter, tokenize_quick_add, QuickAddKind,
+};
 use crate::time;
 use ratatui::symbols::border;
 use ratatui::{
@@ -248,18 +250,101 @@ impl<'a> AppRender for App<'a> {
                 Mode::Normal | Mode::Visual | Mode::ConfirmArchive => "",
             };
 
-            let mut text_lines = vec![Line::from(format!(" {}_", self.input))];
-            let mut height = 3;
+            let mut text_lines: Vec<Line> = Vec::new();
             let width = if self.mode == Mode::Capturing { 70 } else { 50 };
 
             if self.mode == Mode::Capturing {
+                text_lines.push(self.capture_input_line());
                 text_lines.push(Line::from(""));
-                text_lines.push(Line::from(Span::styled(
-                    " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)",
-                    Style::default().fg(self.theme.text_dim),
-                )));
-                height = 5;
+                if self.input.trim().is_empty() {
+                    text_lines.push(Line::from(Span::styled(
+                        " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  !优先级 (如 !a)",
+                        Style::default().fg(self.theme.text_dim),
+                    )));
+                } else {
+                    let parsed = parse_quick_add(&self.input);
+                    let tokens = tokenize_quick_add(&self.input);
+                    if !parsed.title.is_empty() {
+                        text_lines.push(Line::from(vec![
+                            Span::styled(" 标题: ", Style::default().fg(self.theme.text_dim)),
+                            Span::raw(parsed.title.clone()),
+                        ]));
+                    }
+                    if !parsed.tags.is_empty() {
+                        let mut spans = vec![Span::styled(
+                            " 标签: ",
+                            Style::default().fg(self.theme.text_dim),
+                        )];
+                        for (i, tag) in parsed.tags.iter().enumerate() {
+                            spans.push(Span::styled(
+                                format!("@{}", tag),
+                                Style::default()
+                                    .fg(self.theme.hl_fg)
+                                    .add_modifier(Modifier::BOLD),
+                            ));
+                            if i + 1 < parsed.tags.len() {
+                                spans.push(Span::raw(" "));
+                            }
+                        }
+                        text_lines.push(Line::from(spans));
+                    }
+                    if let Some(ref ts) = parsed.time_str {
+                        let (resolved_text, resolved_style) = match time::parse_time(ts) {
+                            Ok(ms) => (
+                                time::format_local(Some(ms)),
+                                Style::default().fg(self.theme.text_dim),
+                            ),
+                            Err(_) => (
+                                "[无效]".to_string(),
+                                Style::default().fg(self.theme.text_urgent),
+                            ),
+                        };
+                        text_lines.push(Line::from(vec![
+                            Span::styled(" 时间: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                format!("~{}", ts),
+                                Style::default().fg(self.theme.text_success),
+                            ),
+                            Span::raw(" → "),
+                            Span::styled(resolved_text, resolved_style),
+                        ]));
+                    }
+                    if let Some(raw) = tokens
+                        .iter()
+                        .rev()
+                        .find(|t| t.kind == QuickAddKind::Rrule)
+                        .map(|t| t.text[1..].to_string())
+                    {
+                        let resolved = parse_rrule_shorthand(&raw);
+                        text_lines.push(Line::from(vec![
+                            Span::styled(" 循环: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                format!("*{}", raw),
+                                Style::default().fg(self.theme.rrule_fg),
+                            ),
+                            Span::raw(" → "),
+                            Span::styled(resolved, Style::default().fg(self.theme.text_dim)),
+                        ]));
+                    }
+                    if let Some(p) = &parsed.priority {
+                        let letter = priority_letter(p).unwrap_or('?');
+                        let color = crate::tui::ui::priority_color(p).unwrap_or(self.theme.hl_fg);
+                        text_lines.push(Line::from(vec![
+                            Span::styled(" 优先级: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                format!("!{}", letter),
+                                Style::default().fg(self.theme.text_success),
+                            ),
+                            Span::raw(" → "),
+                            Span::styled(format!("@{}", p), Style::default().fg(color)),
+                        ]));
+                    }
+                }
+            } else {
+                text_lines.push(Line::from(format!(" {}_", self.input)));
             }
+
+            let height = text_lines.len() as u16 + 2;
 
             if self.show_syntax {
                 // 当处于编辑/录入模式且按了 Ctrl+P 双开时，编辑输入框居左靠上绘制
@@ -654,9 +739,20 @@ impl<'a> AppRender for App<'a> {
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled("@标签", Style::default().fg(self.theme.text_success)),
-                Span::raw("    添加情境或优先级, 如 "),
-                Span::styled("@work @p1", Style::default().fg(Color::LightBlue)),
+                Span::raw("    添加情境, 如 "),
+                Span::styled("@work", Style::default().fg(Color::LightBlue)),
                 Span::raw(" (支持 Tab 补全)"),
+            ]),
+            Line::from(vec![
+                Span::raw("  "),
+                Span::styled("!优先级", Style::default().fg(self.theme.text_success)),
+                Span::raw("    设置优先级: "),
+                Span::styled("!a", Style::default().fg(Color::Red)),
+                Span::raw("(高) / "),
+                Span::styled("!b", Style::default().fg(Color::Yellow)),
+                Span::raw("(中) / "),
+                Span::styled("!c", Style::default().fg(Color::Blue)),
+                Span::raw("(低)"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -671,7 +767,7 @@ impl<'a> AppRender for App<'a> {
                 ),
                 Span::raw(" / "),
                 Span::styled(
-                    "a写周报 @work @p1 ~+3d",
+                    "a写周报 @work !a ~+3d",
                     Style::default().fg(Color::LightBlue),
                 ),
             ]),
@@ -1316,5 +1412,38 @@ fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'st
         .collect()
 }
 
-
-
+impl<'a> App<'a> {
+    fn capture_input_line(&self) -> Line<'a> {
+        let input = &self.input;
+        let mut spans: Vec<Span<'a>> = Vec::new();
+        spans.push(Span::raw(" "));
+        let mut prev = 0usize;
+        for tok in tokenize_quick_add(input) {
+            if tok.start > prev {
+                spans.push(Span::raw(input[prev..tok.start].to_string()));
+            }
+            let style = match tok.kind {
+                QuickAddKind::Tag => Style::default()
+                    .fg(self.theme.hl_fg)
+                    .add_modifier(Modifier::BOLD),
+                QuickAddKind::Time => Style::default().fg(self.theme.text_success),
+                QuickAddKind::Rrule => Style::default().fg(self.theme.rrule_fg),
+                QuickAddKind::Priority => {
+                    let tag =
+                        crate::parser::priority_tag(&input[tok.start + 1..tok.end]).unwrap_or("");
+                    Style::default()
+                        .fg(crate::tui::ui::priority_color(tag).unwrap_or(self.theme.hl_fg))
+                        .add_modifier(Modifier::BOLD)
+                }
+                QuickAddKind::Title => Style::default(),
+            };
+            spans.push(Span::styled(input[tok.start..tok.end].to_string(), style));
+            prev = tok.end;
+        }
+        if prev < input.len() {
+            spans.push(Span::raw(input[prev..].to_string()));
+        }
+        spans.push(Span::raw("_"));
+        Line::from(spans)
+    }
+}

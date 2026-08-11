@@ -23,6 +23,9 @@ pub fn run(conn: &Connection, args: CaptureArgs) -> Result<()> {
 
     let mut tag_names: Vec<String> = args.tags.clone();
     tag_names.extend(quick_add.tags);
+    if let Some(p) = &quick_add.priority {
+        tag_names.push(p.clone());
+    }
     if args.p1 {
         tag_names.push("p1".into());
     }

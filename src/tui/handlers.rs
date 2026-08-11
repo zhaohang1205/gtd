@@ -641,6 +641,10 @@ impl<'a> AppHandlers for App<'a> {
                     } else {
                         None
                     };
+                    let mut tag_names = quick_add.tags;
+                    if let Some(p) = &quick_add.priority {
+                        tag_names.push(p.clone());
+                    }
                     let t = tasks::create_capture(
                         self.conn,
                         &CaptureInput {
@@ -651,7 +655,8 @@ impl<'a> AppHandlers for App<'a> {
                                 task::Status::Inbox
                             },
                             due_at,
-                            tag_names: quick_add.tags,
+                            tag_names,
+                            rrule: quick_add.rrule,
                             ..Default::default()
                         },
                     )?;
