@@ -1524,7 +1524,7 @@ impl<'a> AppRender for App<'a> {
                     Span::styled(
                         crate::tr!(self.lang, "标题: ", "Title: "),
                         Style::default()
-                            .fg(Color::Cyan)
+                            .fg(self.theme.text_dim)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
@@ -1616,7 +1616,7 @@ impl<'a> AppRender for App<'a> {
                         Style::default().fg(self.theme.text_dim),
                     )];
                     for (i, tg) in d.tags.iter().enumerate() {
-                        let c = ui::priority_color(&tg.name).unwrap_or(Color::Cyan);
+                        let c = ui::priority_color(&tg.name).unwrap_or(self.theme.hl_fg);
                         tag_spans.push(Span::styled(
                             format!("@{}", tg.name),
                             Style::default().fg(c),

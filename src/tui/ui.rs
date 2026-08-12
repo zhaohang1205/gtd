@@ -166,7 +166,7 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
                         spans.push(Span::raw(","));
                     }
                     first = false;
-                    let c = priority_color(t).unwrap_or(Color::Cyan);
+                    let c = priority_color(t).unwrap_or(app.theme.hl_fg);
                     spans.push(Span::styled(format!("@{}", t), Style::default().fg(c)));
                 }
             }
