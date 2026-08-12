@@ -78,16 +78,16 @@ pub fn relative_due(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> 
         if hours.abs() < 1.0 {
             let m = (hours * 60.0).abs().round().max(1.0) as i64;
             return Some(if diff < 0 {
-                crate::tr!(lang, "{}分钟前", "{}m ago").replace("{}", &m.to_string())
+                crate::tr!(lang, "{}分钟前", "{}m ago", m)
             } else {
-                crate::tr!(lang, "{}分钟后", "in {}m").replace("{}", &m.to_string())
+                crate::tr!(lang, "{}分钟后", "in {}m", m)
             });
         }
         let h = hours.abs().round() as i64;
         return Some(if diff < 0 {
-            crate::tr!(lang, "{}小时前", "{}h ago").replace("{}", &h.to_string())
+            crate::tr!(lang, "{}小时前", "{}h ago", h)
         } else {
-            crate::tr!(lang, "{}小时后", "in {}h").replace("{}", &h.to_string())
+            crate::tr!(lang, "{}小时后", "in {}h", h)
         });
     }
 
@@ -97,9 +97,9 @@ pub fn relative_due(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> 
     } else if d == -1 {
         crate::tr!(lang, "昨天", "yesterday").to_string()
     } else if d > 0 {
-        crate::tr!(lang, "{}天后", "in {}d").replace("{}", &d.to_string())
+        crate::tr!(lang, "{}天后", "in {}d", d)
     } else {
-        crate::tr!(lang, "逾期{}天", "{}d overdue").replace("{}", &(-d).to_string())
+        crate::tr!(lang, "逾期{}天", "{}d overdue", -d)
     })
 }
 
@@ -117,16 +117,16 @@ pub fn relative_past(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String>
         let hours = diff as f64 / (3600.0 * 1000.0);
         if hours < 1.0 {
             let m = (hours * 60.0).round().max(1.0) as i64;
-            return Some(crate::tr!(lang, "{}分钟前", "{}m ago").replace("{}", &m.to_string()));
+            return Some(crate::tr!(lang, "{}分钟前", "{}m ago", m));
         }
         let h = hours.round() as i64;
-        return Some(crate::tr!(lang, "{}小时前", "{}h ago").replace("{}", &h.to_string()));
+        return Some(crate::tr!(lang, "{}小时前", "{}h ago", h));
     }
     let d = days_between(ms, now);
     if d <= 1 {
         Some(crate::tr!(lang, "昨天", "yesterday").to_string())
     } else {
-        Some(crate::tr!(lang, "{}天前", "{}d ago").replace("{}", &d.to_string()))
+        Some(crate::tr!(lang, "{}天前", "{}d ago", d))
     }
 }
 

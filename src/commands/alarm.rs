@@ -279,7 +279,7 @@ mod tests {
             mk_task("overdue", Status::Next, Some(now - 1000)),
         ];
         let mut ring = due_to_ring(&tasks, &[], now, lead_ms);
-        ring.sort_by(|a, b| a.1.cmp(&b.1));
+        ring.sort_by_key(|(_, due)| *due);
         let ids: Vec<String> = ring.into_iter().map(|(id, _)| id).collect();
         assert_eq!(ids, vec!["overdue", "soon"]);
     }

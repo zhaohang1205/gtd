@@ -97,7 +97,11 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         .iter()
         .map(|x| x.name.clone())
         .collect();
+    Ok(row_from_tags(t, indent, tags))
+}
 
+/// 用已取好的标签名构建行，避免每行一次 DB 查询。
+pub(crate) fn row_from_tags(t: &Task, indent: usize, tags: Vec<String>) -> Row {
     // 完成进度：行动按检查单完成数。
     let (done, total) = if !t.checklist.is_empty() {
         let total = t.checklist.len();
@@ -107,7 +111,7 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         (None, None)
     };
 
-    Ok(Row {
+    Row {
         id: t.id.clone(),
         title: t.title.clone(),
         status: t.status.to_string(),
@@ -123,7 +127,7 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         done,
         total,
         archive_reason: t.archive_reason.clone(),
-    })
+    }
 }
 
 /// 启动交互式 TUI。
@@ -909,5 +913,24 @@ mod tests {
         app.popup = None;
         assert_eq!(app.lang, crate::i18n::Lang::En, "重启后恢复英文");
         assert!(!app.theme.is_dark, "重启后恢复亮色主题");
+    }
+
+    #[test]
+    fn shift_c_enters_checklist_adding_and_pomo_config_moved_to_bracket() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        seed(&conn);
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+
+        // Shift+C（Char('C')）→ 新增检查单（不再被番茄钟配置遮蔽）
+        app.handle_key(key('C')).unwrap();
+        assert_eq!(app.mode, Mode::ChecklistAdding, "Shift+C 进入新增检查单");
+        app.handle_key(kc(KeyCode::Esc)).unwrap();
+
+        // '[' → 自定义番茄钟时长
+        app.handle_key(key('[')).unwrap();
+        assert_eq!(app.mode, Mode::ConfiguringPomo, "'[' 进入番茄钟配置");
+        app.handle_key(kc(KeyCode::Esc)).unwrap();
     }
 }

@@ -358,6 +358,38 @@ pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
     get(conn, id)
 }
 
+/// Count of archived (soft-deleted) tasks, for the guide sidebar badge.
+pub fn count_archived(conn: &Connection) -> Result<usize> {
+    let c: usize = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE archived_at IS NOT NULL",
+        [],
+        |r| r.get(0),
+    )?;
+    Ok(c)
+}
+
+/// Tasks whose `due_at` falls in the inclusive `[start_ms, end_ms]` window.
+/// Lightweight query returning only the columns the due-notification check needs,
+/// instead of scanning every task row on each tick.
+pub fn due_in_range(
+    conn: &Connection,
+    start_ms: i64,
+    end_ms: i64,
+) -> Result<Vec<(String, String, Option<i64>)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, due_at FROM tasks \
+         WHERE archived_at IS NULL AND due_at BETWEEN ?1 AND ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |r| {
+        Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 /// List only archived (soft-deleted) tasks, for the restore UI.
 pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(

@@ -3,6 +3,12 @@ name = "gtp"
 version = "0.1.0"
 edition = "2021"
 description = "GTD terminal task manager (data layer + CLI), with time-datafication and a tag system"
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/zhaohang1205/gtd"
+rust-version = "1.89"
+keywords = ["gtd", "todo", "tui", "task-manager", "pomodoro"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }

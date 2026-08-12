@@ -59,23 +59,20 @@ impl<'a> AppHandlers for App<'a> {
                     self.review_step = 0;
                     self.status_message =
                         crate::tr!(self.lang, "周回顾已取消", "Weekly Review cancelled").into();
-                    let _ = self.refresh();
-                    self.load_detail();
+                    let _ = self.reload();
                 } else if self.mode == Mode::Visual {
                     self.set_mode(Mode::Normal);
                     self.visual_start_idx = None;
                     self.selected_ids.clear();
                     self.status_message =
                         crate::tr!(self.lang, "已退出可视模式", "Exited visual mode").into();
-                    let _ = self.refresh();
-                    self.load_detail();
+                    let _ = self.reload();
                 } else if self.tag_filter.is_some() || !self.search_query.is_empty() {
                     self.tag_filter = None;
                     self.search_query.clear();
                     self.status_message =
                         crate::tr!(self.lang, "已清除过滤", "Cleared filters").into();
-                    let _ = self.refresh();
-                    self.load_detail();
+                    let _ = self.reload();
                 } else {
                     self.hide_pomo_banner = true;
                     self.status_message.clear();
@@ -293,7 +290,7 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 }
             }
-            KeyCode::Char('C') => {
+            KeyCode::Char('[') => {
                 let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
                 self.set_mode(Mode::ConfiguringPomo);
                 self.input = format!(
@@ -302,6 +299,10 @@ impl<'a> AppHandlers for App<'a> {
                     pomo.config.short_break_mins,
                     pomo.config.long_break_mins
                 );
+            }
+            KeyCode::Char('C') if self.items.get(self.selected).is_some() => {
+                self.set_mode(Mode::ChecklistAdding);
+                self.input.clear();
             }
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
@@ -346,10 +347,6 @@ impl<'a> AppHandlers for App<'a> {
                 );
             }
             KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
-            KeyCode::Char('K') if self.items.get(self.selected).is_some() => {
-                self.set_mode(Mode::ChecklistAdding);
-                self.input.clear();
-            }
             KeyCode::Char(' ') => {
                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
                     let is_in_break = matches!(
@@ -514,16 +511,14 @@ impl<'a> AppHandlers for App<'a> {
                         self.selected_ids.clear();
                         self.visual_start_idx = None;
                     }
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.pending_archive_ids.clear();
                     self.set_mode(Mode::Normal);
                     self.status_message =
                         crate::tr!(self.lang, "归档已取消", "Archive cancelled").into();
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
                 _ => {}
             }
@@ -534,8 +529,7 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Esc => {
                 self.set_mode(Mode::Normal);
                 self.input.clear();
-                self.refresh()?;
-                self.load_detail();
+                self.reload()?;
             }
             KeyCode::Enter => {
                 let input = self.input.clone();
@@ -611,8 +605,7 @@ impl<'a> AppHandlers for App<'a> {
                     self.status_message =
                         crate::tr!(self.lang, "搜索: {}", "Search: {}", self.search_query);
                 }
-                self.refresh()?;
-                self.load_detail();
+                self.reload()?;
             }
             Mode::FilteringTag => {
                 let t = input.trim().to_string();
@@ -625,8 +618,7 @@ impl<'a> AppHandlers for App<'a> {
                     self.status_message =
                         crate::tr!(self.lang, "过滤标签: @{}", "Filter tag: @{}", t);
                 }
-                self.refresh()?;
-                self.load_detail();
+                self.reload()?;
             }
             Mode::EditingTitle => {
                 let title = input.trim();
@@ -635,8 +627,7 @@ impl<'a> AppHandlers for App<'a> {
                         tasks::rename(self.conn, &row.id, title)?;
                         self.status_message =
                             crate::tr!(self.lang, "已重命名 {}", "renamed {}", short_id(&row.id));
-                        self.refresh()?;
-                        self.load_detail();
+                        self.reload()?;
                     }
                 }
             }
@@ -668,8 +659,7 @@ impl<'a> AppHandlers for App<'a> {
                             }
                         }
                     }
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
             }
             Mode::EditingRrule => {
@@ -697,8 +687,7 @@ impl<'a> AppHandlers for App<'a> {
                             short_id(&row.id)
                         )
                     };
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
             }
             Mode::EditingDelegated => {
@@ -721,8 +710,7 @@ impl<'a> AppHandlers for App<'a> {
                             short_id(&row.id)
                         )
                     };
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
             }
             Mode::Capturing => {
@@ -783,8 +771,7 @@ impl<'a> AppHandlers for App<'a> {
                     );
                     self.selected_ids.clear();
                     self.visual_start_idx = None;
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
             }
             Mode::SchedulingCalendar => {}
@@ -872,8 +859,7 @@ impl<'a> AppHandlers for App<'a> {
                                 "{} -> waiting",
                                 short_id(&t.id)
                             );
-                            self.refresh()?;
-                            self.load_detail();
+                            self.reload()?;
                         }
                         Err(e) => {
                             self.status_message =
@@ -903,8 +889,7 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     self.set_mode(Mode::Normal);
-                    self.refresh()?;
-                    self.load_detail();
+                    self.reload()?;
                 }
             }
             Mode::ChecklistAdding => {
@@ -998,8 +983,7 @@ impl<'a> AppHandlers for App<'a> {
             if tasks::unarchive(self.conn, &row.id).is_ok() {
                 self.status_message =
                     crate::tr!(self.lang, "已恢复 {}", "restored {}", short_id(&row.id));
-                self.refresh()?;
-                self.load_detail();
+                self.reload()?;
             }
         }
         Ok(())

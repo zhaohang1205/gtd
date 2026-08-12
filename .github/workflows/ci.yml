@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: fmt + clippy + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --all-targets
+
+  msrv:
+    name: MSRV test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (MSRV)
+        uses: dtolnay/rust-toolchain@1.89.0
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --all-targets

@@ -105,29 +105,3 @@ pub(crate) fn effective_due(task: &Task) -> Option<i64> {
     }
     task.due_at.or(task.scheduled_start_at)
 }
-
-/// Whether a task has a due / occurrence (recurring or not) inside the
-/// inclusive `[start, end]` window. For recurring tasks every RRULE occurrence
-/// is considered, not just the next one.
-pub(crate) fn occurs_in_window(task: &Task, start: i64, end: i64) -> bool {
-    window_due(task, start, end).is_some()
-}
-
-/// The first occurrence/due of `task` falling inside `[start, end]` (None if
-/// the task has nothing scheduled in that window).
-pub(crate) fn window_due(task: &Task, start: i64, end: i64) -> Option<i64> {
-    if let Some(rr) = &task.rrule {
-        let anchor = task.scheduled_start_at.or(task.due_at);
-        if let Some(a) = anchor {
-            if let Ok(occ) = crate::time::rrule_occurrences(rr, a, 366) {
-                if let Some(m) = occ.into_iter().find(|m| *m >= start && *m <= end) {
-                    return Some(m);
-                }
-            }
-        }
-        return None;
-    }
-    task.due_at
-        .or(task.scheduled_start_at)
-        .filter(|d| *d >= start && *d <= end)
-}
