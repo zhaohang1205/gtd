@@ -5,9 +5,9 @@ GTD terminal task manager (`gtp`) — a Rust binary (edition 2021, **no lib targ
 ## Commands
 
 - Build/run: `cargo run -- capture "buy milk" --tag home` — note the `--` before subcommand args.
-- Test: `cargo test` — unit tests live only in `src/tui/mod.rs`; run one with `cargo test <name>`.
-- Lint/format: `cargo clippy`, `cargo fmt`.
-- No CI, Makefile, or build scripts. `tempfile` is available for test DBs.
+- Test: `cargo test` — unit tests live in `src/tui/mod.rs`, `src/parser.rs`, and `src/commands/alarm.rs`; run one with `cargo test <name>`.
+- Lint/format: `cargo clippy`, `cargo fmt`. Clippy must stay clean with `-- -D warnings`.
+- CI: GitHub Actions (`.github/workflows/ci.yml`) runs fmt, clippy `-D warnings`, tests, and an MSRV job; `release.yml` builds tagged releases (`v*`). `tempfile` is available for test DBs.
 
 ## Architecture (layers depend only inward)
 
@@ -39,4 +39,4 @@ Domain errors use `crate::error::Error` (thiserror); command handlers return `an
 
 ## Existing docs
 
-`CODEBUDDY.md` has per-file detail but is partially stale (migration version, test locations). Treat this file as authoritative.
+`README.md` is the bilingual user manual (中文/English). This file is the authoritative contributor guide.

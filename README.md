@@ -1,146 +1,116 @@
-# gtp — GTD Terminal Task Manager
+# gtp — GTD 终端任务管理器 / GTD Terminal Task Manager
 
 [![CI](https://github.com/zhaohang1205/gtd/actions/workflows/ci.yml/badge.svg)](https://github.com/zhaohang1205/gtd/actions/workflows/ci.yml)
 [![Release](https://github.com/zhaohang1205/gtd/actions/workflows/release.yml/badge.svg)](https://github.com/zhaohang1205/gtd/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-A GTD (Getting Things Done) task manager for the terminal, written in Rust.
-It combines a **SQLite data layer**, a **CLI**, and a **ratatui TUI** into one
-binary.
+用 Rust 写成的 GTD 终端任务管理器：SQLite 数据层 + CLI + ratatui TUI 三合一。
+A GTD terminal task manager in Rust: SQLite data layer + CLI + ratatui TUI in one binary.
 
-The core design idea is **time-datafication**: every task state change is
-stamped with a UTC-ms timestamp and appended to an append-only `task_events`
-timeline, so every task carries a full audit trail of its life.
+核心设计是 **时间数据化（time-datafication）**：每次任务状态变更都打上 UTC 毫秒时间戳，
+追加到只写(append-only)的 `task_events` 时间线，每个任务都带完整的履历。
+Core idea: **time-datafication** — every state change is stamped with UTC-ms and appended to
+an append-only `task_events` timeline, giving every task a full audit trail.
 
-## Features
+## 功能特性 / Features
 
-- **Full GTD workflow** — Inbox → Next / Scheduled / Waiting / Someday /
-  Reference → Done, with weekly review wizard and today/tomorrow views.
-- **Time-datafication** — append-only event timeline per task (`created`,
-  `status_change`, `completed`, `archived`, pomodoro counts, habit reschedules).
-- **Recurring tasks / habits** — RRULE support (`FREQ=DAILY|WEEKLY|MONTHLY`,
-  `INTERVAL`, `COUNT`, `UNTIL`, `BYDAY`) plus a quick shorthand like
-  `*2w[1,3]` (every 2 weeks Mon/Wed). Marking one `Done` auto-reschedules it.
-- **Tag system** — context tags (`@home`, `@work` …) with preset priorities
-  (`p1`/`p2`/`p3`); custom tags auto-create on first use.
-- **Checklists** — sub-items with one-key tick, auto-reset when all done.
-- **Pomodoro focus mode** — full-screen focus timer with a braille progress
-  ring, streaks, desktop notifications, a background daemon and a waybar module.
-- **Alarm / waybar reminders** — upcoming-task reminders with 5-minute lead.
-- **i18n** — Chinese by default, English toggle with `F6` (persisted).
-- **Themes** — Catppuccin Mocha (dark) / Latte (light) toggled with `F5`.
+- 完整 GTD 流程：收件箱 → 下一步/已排程/等待中/将来也许/参考资料 → 已完成，含周回顾向导与今日/明日视图 · Full GTD workflow with weekly review and today/tomorrow views
+- 循环任务：RRULE 支持 + 快捷简写（`*2w[1,3]`），完成后自动重排 · Recurring tasks auto-reschedule on Done
+- 标签系统：情境标签 + `p1/p2/p3` 优先级，自定义标签自动创建 · Tag system with auto-created custom tags
+- 检查单：一键勾选，全部完成自动重置 · Checklists with one-key tick and auto-reset
+- 番茄钟专注模式：全屏倒计时环、连击、桌面通知、waybar 模块 · Pomodoro focus mode with progress ring, streaks and a waybar module
+- 中英双语界面（`F6` 切换）、Catppuccin 深/浅主题（`F5` 切换） · Bilingual UI (F6) and Catppuccin themes (F5)
 
-## Installation
+## 安装 / Installation
 
-Requires Rust 1.89+. SQLite is bundled, so there are no system dependencies.
+需要 Rust 1.89+，SQLite 已内置，无系统依赖。Requires Rust 1.89+; SQLite is bundled.
 
 ```sh
 cargo install --git https://github.com/zhaohang1205/gtd
-# or build from source
+# 或本地构建 / or build from source:
 git clone https://github.com/zhaohang1205/gtd.git && cd gtd
 cargo build --release
 ```
 
-Data lives in `~/.config/gtp/` (`gtp.db` + `pomo.json`).
+数据目录：`~/.config/gtp/`（`gtp.db` + `pomo.json`）。Data lives in `~/.config/gtp/`.
 
-## Quick start
+## 快速开始 / Quick start
 
 ```sh
-gtp                                # launch the TUI
-gtp capture "buy milk" --tag home  # capture into the inbox
-gtp list --status next             # list next actions
-gtp show <task-id>                 # full event timeline
+gtp                                # 启动 TUI / launch the TUI
+gtp capture "买牛奶" --tag home     # 捕获进收件箱 / capture into the inbox
+gtp list --status next             # 列出下一步 / list next actions
+gtp show <task-id>                 # 查看完整时间线 / full event timeline
 ```
 
-Task references accept a full id, a unique id-prefix (like git), or an exact title.
+任务引用支持完整 id、唯一 id 前缀（类似 git）、或精确标题。Task refs accept a full id, a unique
+id-prefix, or an exact title.
 
 ## CLI
 
-| Command | Description |
+| 命令 / Command | 说明 / Description |
 | --- | --- |
-| `gtp` | Launch the interactive TUI |
-| `gtp capture <title> [--tag T]... [--due TIME] [--status S] [--p1\|--p2\|--p3] [--json]` | Capture a new item |
-| `gtp list [--status S] [--tag T]... [--due-before TIME] [--json]` | List tasks |
-| `gtp show <id> [--json]` | Show a task with its event timeline |
-| `gtp next <id>` / `wait` / `someday` / `done` | Move between statuses |
-| `gtp schedule <id> [--start TIME] [--end TIME] [--rrule R]` | Schedule (with optional recurrence) |
-| `gtp archive <id>` / `restore <id>` | Soft delete / restore |
-| `gtp tag <id> <name>` / `untag <id> <name>` | Manage tags |
-| `gtp review` | Weekly review helper |
-| `gtp tags` | List all tags grouped by category |
-| `gtp pomo start <id> \| stop \| daemon \| waybar` | Pomodoro |
-| `gtp alarm waybar [slot] \| next [slot]` | Upcoming-task reminders |
+| `gtp` | 启动 TUI / Launch the TUI |
+| `gtp capture <title> [--tag T]... [--due TIME] [--status S] [--p1\|--p2\|--p3] [--json]` | 捕获新任务 / Capture |
+| `gtp list [--status S] [--tag T]... [--due-before TIME] [--json]` | 列出任务 / List tasks |
+| `gtp show <id> [--json]` | 任务详情 + 时间线 / Show with timeline |
+| `gtp next\|wait\|someday\|done <id>` | 流转状态 / Move between statuses |
+| `gtp schedule <id> [--start TIME] [--end TIME] [--rrule R]` | 排期（可加循环）/ Schedule (+recurrence) |
+| `gtp archive <id>` / `gtp restore <id>` | 软删除 / 恢复 / Soft delete / restore |
+| `gtp tag <id> <name>` / `gtp untag <id> <name>` | 增删标签 / Manage tags |
+| `gtp review` | 周回顾 / Weekly review |
+| `gtp tags` | 标签库 / List tags |
+| `gtp pomo start <id> \| stop \| daemon \| waybar` | 番茄钟 / Pomodoro |
+| `gtp alarm waybar [slot] \| next [slot]` | 到期提醒 / Upcoming-task reminders |
 
-## TUI keybindings
+## TUI 快捷键 / Keybindings
 
-| Key | Action |
+| 键 / Key | 说明 / Action |
 | --- | --- |
-| `h` / `l` | Switch pane (guide / list / detail) |
-| `j` / `k` | Move up / down the list |
-| `1`-`9` | Switch view (8 = archive, 9 = tags) |
-| `⇧J` / `⇧K` | Today / Tomorrow view |
-| `/` | Global search (title & notes) |
-| `f` | Context / tag filter |
-| `a` | Quick capture |
-| `Enter` | Clarify / mark next action |
-| `x` / `w` / `s` | Done / Waiting / Someday |
-| `c` | Calendar schedule |
-| `C` | Add checklist item |
-| `Space` | Tick checklist / continue pomodoro |
-| `e` / `d` / `L` / `W` | Edit title / due / rrule / delegated |
-| `n` | Edit long notes (`$EDITOR`) |
-| `P` / `S` | Start / stop pomodoro |
-| `[` | Customize pomodoro lengths (work;short;long) |
-| `A` / `D` | Archive (y confirm / n cancel) |
-| `u` | Restore from archive |
-| `r` / `R` | Weekly review (start / next step) |
-| `F5` / `F6` | Toggle theme / language |
-| `F1` or `?` | Toggle shortcut help |
-| `q` | Quit |
+| `h` / `l` | 切换面板（引导/列表/详情）· switch pane |
+| `j` / `k` | 上下移动 · move up/down |
+| `1`-`9` | 切换视图（8=归档，9=标签库）· switch view |
+| `⇧J` / `⇧K` | 今日 / 明日 · today / tomorrow |
+| `/` | 全局搜索 · global search |
+| `f` | 情境过滤 · tag filter |
+| `a` | 快速捕获 · quick capture |
+| `Enter` | 理清/标记下一步 · clarify / next |
+| `x` / `w` / `s` | 已完成 / 等待中 / 将来也许 · done / waiting / someday |
+| `c` / `C` | 日历排期 / 新增检查单 · schedule / add checklist item |
+| `Space` | 勾选检查单 / 继续番茄 · tick / continue pomodoro |
+| `e` / `d` / `L` / `W` | 编辑标题 / 截止 / 循环 / 委派 · edit title/due/rrule/delegated |
+| `n` | 编辑长备注（`$EDITOR`）· edit notes |
+| `P` / `S` / `[` | 开始 / 停止番茄 / 番茄时长配置 · pomodoro start/stop/config |
+| `A` / `D` | 归档（y 确认 / n 取消）· archive (y/n) |
+| `u` | 恢复归档 · restore from archive |
+| `r` / `R` | 周回顾（开始 / 下一步）· weekly review (start/next) |
+| `F5` / `F6` | 主题 / 语言 · theme / language |
+| `F1` 或 `?` | 快捷键帮助 · shortcut help |
+| `q` | 退出 · quit |
 
-## Time & recurrence syntax
-
-Set a due/scheduled time with human-friendly strings:
+## 时间与循环语法 / Time & recurrence syntax
 
 ```
-now                    now
-+2h  +30m  +1d  +1w    relative offsets
+now  +2h  +30m  +1d  +1w          相对偏移 / relative offsets
 today / tomorrow [HH:MM]
-HH:MM                  same-day time (or tomorrow if already past)
-2026-07-24 [HH:MM]     absolute date & time
+HH:MM                             当日时刻（已过则视为明日）/ same-day time
+2026-07-24 [HH:MM]                绝对日期时间 / absolute date & time
 ```
 
-Recurrence (RRULE) — used in the schedule prompt, after `;`:
+循环 RRULE（排期提示中在 `;` 后输入）：`FREQ=DAILY|WEEKLY|MONTHLY`、`INTERVAL=2`、
+`BYDAY=SA,SU`、`COUNT=10` / `UNTIL=YYYY-MM-DD`。
+快速简写：`*2w[1,3]`（每两周周一、周三，1-7=周一至周日，0=周日），优先级 `!a`/`!b`/`!c`。
 
-```
-FREQ=DAILY|WEEKLY|MONTHLY
-INTERVAL=2            every 2 weeks
-BYDAY=SA,SU           days of week
-COUNT=10 / UNTIL=YYYY-MM-DD
-```
-
-Quick-capture shorthand: `*2w[1,3]` = every 2 weeks Mon & Wed (days 1–7,
-0 = Sunday), or `*mo,we`. Priority via `!a` / `!b` / `!c`.
-
-## Development
+## 开发 / Development
 
 ```sh
-cargo test                 # run tests
-cargo clippy -- -D warnings # lint (must stay clean)
-cargo fmt --check          # formatting
+cargo test                     # 测试 / tests
+cargo clippy -- -D warnings    # 静态检查（须零警告）/ lint (must stay clean)
+cargo fmt --check              # 格式 / formatting
 ```
 
-## Architecture
+架构说明见 [AGENTS.md](AGENTS.md)。See AGENTS.md for architecture and contributor rules.
 
-- `cli.rs` — clap command definitions.
-- `commands/` — thin handlers for each CLI action (`pomo.rs` runs the daemon).
-- `repo/` — rusqlite data access; `tasks.rs` holds most domain logic; every
-  change is appended to the `task_events` timeline (`mod.rs::log_event`).
-- `model/` — plain structs + enums.
-- `db/` — connection + versioned, idempotent migrations.
-- `time.rs` — human time parsing, RRULE expansion, local formatting.
-- `tui/` — ratatui app (guide / list / detail / calendar / pomodoro focus).
+## 许可证 / License
 
-## License
-
-MIT. See [LICENSE](LICENSE).
+MIT，见 [LICENSE](LICENSE)。

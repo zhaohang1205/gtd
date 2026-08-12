@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`day_lists`) with a single RRULE expansion per recurring task; batched tag
   fetch (`get_tags_for_tasks`) replacing per-row queries.
 
+### Changed
+
+- `README.md` is now a bilingual (中文/English) user manual.
+- Removed the stale `CODEBUDDY.md`; `AGENTS.md` is the single authoritative
+  contributor guide, with test locations and CI usage corrected.
+
 ### Fixed
 
 - Checklist-adding keybinding was unreachable (`Shift+K` shadowed by the
@@ -25,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Due-notification checks mixed milliseconds and seconds, so 1h/10m/due-now
   desktop notifications never fired. The check now uses a consistent seconds
   scale and queries only tasks within the relevant window (`due_in_range`).
+- TUI tests read the live `pomo.json`, so a running `gtp pomo daemon` made the
+  rendering tests fail. Added a test-only idle override
+  (`set_pomo_idle_for_tests`).
 - `relative_due` / `relative_past` built strings via repeated `replace`;
   switched to a single `format!`-style substitution.
 

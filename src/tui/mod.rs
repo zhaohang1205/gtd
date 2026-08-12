@@ -276,6 +276,7 @@ mod tests {
 
     #[test]
     fn drive_tui() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
         seed(&conn);
@@ -498,6 +499,7 @@ mod tests {
 
     #[test]
     fn empty_db_shows_guide() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
         let mut app = App::new(&conn).unwrap();
@@ -752,6 +754,7 @@ mod tests {
 
     #[test]
     fn done_view_shows_completion_not_overdue() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
         let t = tasks::create_capture(
@@ -778,6 +781,7 @@ mod tests {
 
     #[test]
     fn archived_view_shows_reason_not_status_or_overdue() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
         let t = tasks::create_capture(
@@ -868,6 +872,7 @@ mod tests {
 
     #[test]
     fn lang_and_theme_toggle_persist_to_settings() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
 

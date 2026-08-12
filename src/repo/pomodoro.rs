@@ -2,6 +2,16 @@ use crate::model::pomodoro::PomoState;
 use anyhow::Result;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 测试隔离：置为 true 时 `get_state()` 恒返回 Idle，
+/// 避免 TUI 渲染测试读到真实 `~/.config/gtp/pomo.json` 里的运行中 daemon。
+static POMO_IDLE_OVERRIDE: AtomicBool = AtomicBool::new(false);
+
+#[cfg(test)]
+pub fn set_pomo_idle_for_tests() {
+    POMO_IDLE_OVERRIDE.store(true, Ordering::Relaxed);
+}
 
 pub fn pomo_file_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -12,6 +22,9 @@ pub fn pomo_file_path() -> PathBuf {
 }
 
 pub fn get_state() -> Result<PomoState> {
+    if POMO_IDLE_OVERRIDE.load(Ordering::Relaxed) {
+        return Ok(PomoState::default());
+    }
     let path = pomo_file_path();
     if !path.exists() {
         return Ok(PomoState::default());
