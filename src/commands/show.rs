@@ -27,7 +27,7 @@ pub fn run(conn: &Connection, id: &str, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    println!("Task {}", &task.id);
+    println!("Task {}", task.id);
     println!("  title     : {}", task.title);
     println!("  status    : {}", task.status);
     println!(
