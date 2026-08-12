@@ -41,7 +41,7 @@ pub(crate) fn next_hint(v: View) -> &'static str {
     match v {
         View::Inbox => "按 Enter 理清，决定它的去向",
         View::Today => "今日到期/逾期任务，逐条动手完成",
-        View::Tomorrow => "明日计划，提前准备",
+        View::Tomorrow => "明日任务与需结转的未完成任务",
         View::Next => "选一条开始行动（做）",
         View::Waiting => "跟进被阻塞的事项",
         View::Scheduled => "按排程时间执行",
@@ -73,11 +73,18 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
         id: t.id.clone(),
         title: t.title.clone(),
         status: t.status.to_string(),
-        due: t.due_at.or(t.scheduled_start_at),
+        due: if t.archived_at.is_some() {
+            t.archived_at
+        } else if t.status == task::Status::Done {
+            t.completed_at.or(t.due_at).or(t.scheduled_start_at)
+        } else {
+            t.due_at.or(t.scheduled_start_at)
+        },
         tags,
         indent,
         done,
         total,
+        archive_reason: t.archive_reason.clone(),
     })
 }
 
@@ -507,8 +514,8 @@ mod tests {
         let collect =
             |app: &App| -> Vec<String> { app.items.iter().map(|r| r.title.clone()).collect() };
 
-        app.handle_key(key('T')).unwrap();
-        assert_eq!(app.view, View::Today, "T 切换到今日视图");
+        app.handle_key(key('J')).unwrap();
+        assert_eq!(app.view, View::Today, "Shift+J 切换到今日视图");
         let t = collect(&app);
         assert!(t.iter().any(|s| s == "due-today"), "今日视图含今天到期任务");
         assert!(t.iter().any(|s| s == "overdue"), "今日视图含逾期任务");
@@ -517,8 +524,8 @@ mod tests {
             "今日视图含今日循环发生"
         );
 
-        app.handle_key(key('M')).unwrap();
-        assert_eq!(app.view, View::Tomorrow, "M 切换到明日视图");
+        app.handle_key(key('K')).unwrap();
+        assert_eq!(app.view, View::Tomorrow, "Shift+K 切换到明日视图");
         let t = collect(&app);
         assert!(
             t.iter().any(|s| s == "due-tomorrow"),
@@ -528,10 +535,274 @@ mod tests {
             t.iter().any(|s| s == "daily-habit"),
             "明日视图含明日循环发生"
         );
-        assert!(!t.iter().any(|s| s == "overdue"), "明日视图不含逾期任务");
+        assert!(t.iter().any(|s| s == "overdue"), "明日视图含逾期任务");
         assert!(
-            !t.iter().any(|s| s == "due-today"),
-            "明日视图不含今天到期任务"
+            t.iter().any(|s| s == "due-today"),
+            "明日视图含今天到期但未完成的任务（结转）"
+        );
+
+        // 循环独立性：把今天这次循环标记完成后，明天的发生仍应显示在明日视图
+        tasks::transition(&conn, &rec.id, task::Status::Done).unwrap();
+        app.handle_key(key('K')).unwrap();
+        let t = collect(&app);
+        assert!(
+            t.iter().any(|s| s == "daily-habit"),
+            "今日执行不影响明日循环显示"
+        );
+    }
+
+    #[test]
+    fn relative_due_direction_and_precision() {
+        let now = crate::time::now_ms();
+        let h = 3600 * 1000i64;
+        let d = 24 * 3600 * 1000i64;
+
+        // 未来
+        assert_eq!(
+            crate::time::relative_due(Some(now + 5 * h)).as_deref(),
+            Some("5小时后")
+        );
+        assert_eq!(
+            crate::time::relative_due(Some(now + 30 * 60 * 1000)).as_deref(),
+            Some("30分钟后")
+        );
+        assert_eq!(
+            crate::time::relative_due(Some(now + 2 * d)).as_deref(),
+            Some("2天后")
+        );
+
+        // 过去（修复前：5小时前被 rem_euclid 算成 19小时前）
+        assert_eq!(
+            crate::time::relative_due(Some(now - 5 * h)).as_deref(),
+            Some("5小时前")
+        );
+        assert_eq!(
+            crate::time::relative_due(Some(now - 40 * 60 * 1000)).as_deref(),
+            Some("40分钟前")
+        );
+        assert_eq!(
+            crate::time::relative_due(Some(now - 2 * d)).as_deref(),
+            Some("逾期2天")
+        );
+
+        // 完成时间展示
+        assert_eq!(
+            crate::time::relative_past(Some(now - 3 * h)).as_deref(),
+            Some("3小时前")
+        );
+        assert_eq!(
+            crate::time::relative_past(Some(now - 2 * d)).as_deref(),
+            Some("2天前")
+        );
+        assert_eq!(crate::time::relative_past(None), None);
+    }
+
+    #[test]
+    fn recurring_with_due_only_reschedules_on_done() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "standup".into(),
+                status: task::Status::Scheduled,
+                due_at: Some(crate::time::parse_time("today 09:00").unwrap()),
+                tag_names: vec![],
+                rrule: Some("FREQ=DAILY".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // 只有 due_at + rrule（快速录入场景），完成后应重新排程而非结束
+        let done = tasks::transition(&conn, &t.id, task::Status::Done).unwrap();
+        assert_eq!(
+            done.status,
+            task::Status::Scheduled,
+            "循环任务完成后被重新排程"
+        );
+        assert_eq!(done.completed_at, None, "循环任务不进入已完成");
+        let next = done.due_at.unwrap();
+        let (tom_start, tom_end) = crate::time::local_day_bounds(1);
+        assert!(
+            next >= tom_start && next <= tom_end,
+            "下一次发生落在明日窗口内"
+        );
+
+        // 明日视图应仍包含它
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('K')).unwrap();
+        assert!(app.items.iter().any(|r| r.title == "standup"));
+    }
+
+    #[test]
+    fn next_view_skips_today_tomorrow() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+
+        app.view = View::Inbox;
+        app.next_view(1);
+        assert_eq!(
+            app.view,
+            View::Next,
+            "Inbox 方向键下一个是 Next，而非 Today"
+        );
+
+        app.view = View::Next;
+        app.next_view(1);
+        assert_eq!(app.view, View::Waiting);
+
+        // 从日视图用方向键也能离开，且不会停在日视图
+        app.view = View::Today;
+        app.next_view(1);
+        assert_eq!(app.view, View::Next);
+        app.view = View::Tomorrow;
+        app.next_view(-1);
+        assert!(app.view != View::Today && app.view != View::Tomorrow);
+    }
+
+    #[test]
+    fn done_row_shows_completion_time() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "finished-thing".into(),
+                status: task::Status::Next,
+                due_at: Some(crate::time::now_ms() - 3 * 24 * 3600 * 1000i64),
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let done = tasks::transition(&conn, &t.id, task::Status::Done).unwrap();
+        let row = row_from(&done, 0, &conn).unwrap();
+        assert_eq!(row.status, "done");
+        assert_eq!(
+            row.due, done.completed_at,
+            "已完成行显示完成时间而非截止时间"
+        );
+        assert!(row.due.is_some());
+    }
+
+    #[test]
+    fn done_view_shows_completion_not_overdue() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "finishedlongago".into(),
+                status: task::Status::Next,
+                due_at: Some(crate::time::now_ms() - 3 * 24 * 3600 * 1000i64),
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::transition(&conn, &t.id, task::Status::Done).unwrap();
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('7')).unwrap(); // Done 视图
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+        assert!(s.contains("finishedlongago"), "已完成任务显示在 Done 视图");
+        assert!(!s.contains("逾期"), "已完成任务不应显示逾期");
+    }
+
+    #[test]
+    fn archived_view_shows_reason_not_status_or_overdue() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "completed-then-archived".into(),
+                status: task::Status::Next,
+                due_at: Some(crate::time::now_ms() - 3 * 24 * 3600 * 1000i64),
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::transition(&conn, &t.id, task::Status::Done).unwrap();
+        let arch = tasks::archive(&conn, &t.id).unwrap();
+        assert_eq!(arch.archive_reason.as_deref(), Some("completed"));
+
+        let del = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "deleted-straight-away".into(),
+                status: task::Status::Inbox,
+                due_at: Some(crate::time::now_ms() - 5 * 24 * 3600 * 1000i64),
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let arch = tasks::archive(&conn, &del.id).unwrap();
+        assert_eq!(arch.archive_reason.as_deref(), Some("deleted"));
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('8')).unwrap(); // 归档箱视图
+        assert_eq!(app.view, View::Archived);
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+        assert!(
+            s.contains("completed-then-archived"),
+            "已完成并归档的任务在归档箱"
+        );
+        assert!(
+            s.contains("deleted-straight-away"),
+            "直接删除的任务在归档箱"
+        );
+        assert!(s.contains("完成"), "显示归档原因：完成");
+        assert!(s.contains("删除"), "显示归档原因：删除");
+        assert!(!s.contains("逾期"), "归档箱不再显示逾期");
+    }
+
+    #[test]
+    fn biweekly_shorthand_reschedules_after_done() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        // 一句话录入：*2w[1,3] → 每两周周一/周三
+        let q = crate::parser::parse_quick_add("上体育课 *2w[1,3] ~2026-08-12 09:00");
+        assert_eq!(
+            q.rrule.as_deref(),
+            Some("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE")
+        );
+        let due = crate::time::parse_time("2026-08-12 09:00").unwrap(); // 周三
+
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: q.title,
+                status: task::Status::Scheduled,
+                due_at: Some(due),
+                tag_names: q.tags,
+                rrule: q.rrule,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // 完成后被重新排程到隔周的周一 (08-24), 而非结束
+        let done = tasks::transition(&conn, &t.id, task::Status::Done).unwrap();
+        assert_eq!(done.status, task::Status::Scheduled, "循环任务重新排程");
+        assert_eq!(done.completed_at, None);
+        assert_eq!(
+            crate::time::format_local(done.due_at),
+            "2026-08-24 09:00",
+            "下一次发生 = 2 周后的周一"
         );
     }
 }

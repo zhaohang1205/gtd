@@ -46,37 +46,88 @@ fn local_to_utc_ms(nd: NaiveDateTime) -> Result<i64> {
     Ok(local_dt.with_timezone(&Utc).timestamp_millis())
 }
 
+/// Local-midnight (UTC ms) of the day containing `ms`. Used to classify a
+/// timestamp by calendar day rather than a fixed 24h window.
+fn day_start_ms(ms: i64) -> i64 {
+    Utc.timestamp_millis_opt(ms)
+        .single()
+        .map(|dt| {
+            let d = dt.with_timezone(&Local).date_naive();
+            local_to_utc_ms(d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())).unwrap_or(ms)
+        })
+        .unwrap_or(ms)
+}
+
+/// Whole calendar days between two timestamps (negative when `to` < `from`).
+fn days_between(from_ms: i64, to_ms: i64) -> i64 {
+    (day_start_ms(to_ms) - day_start_ms(from_ms)) / (24 * 3600 * 1000i64)
+}
+
 /// Compact relative description of a due/scheduled timestamp for list rows.
-/// Returns `None` when `ms` is `None`. Examples: "逾期2天", "今天", "3天后", "1小时前".
+/// Returns `None` when `ms` is `None`. Examples: "逾期2天", "明天", "3天后",
+/// "5小时前", "2分钟后". Within ±24h it reports precise minutes/hours (past or
+/// future); beyond that it classifies by local calendar day.
 pub fn relative_due(ms: Option<i64>) -> Option<String> {
     let ms = ms?;
     let now = now_ms();
+    let diff = ms - now;
     let day_ms = 24 * 3600 * 1000i64;
-    let diff_days = (ms - now).div_euclid(day_ms);
-    let rem_ms = (ms - now).rem_euclid(day_ms);
-    let diff_hours = rem_ms as f64 / (3600.0 * 1000.0);
 
-    let suffix = if ms < now { "前" } else { "后" };
-    let text = if (ms - now).abs() < day_ms {
-        if diff_hours < 1.0 {
-            let m = (diff_hours * 60.0).round().max(1.0) as i64;
-            format!("{}分钟{}", m, suffix)
-        } else {
-            let h = diff_hours.round() as i64;
-            format!("{}小时{}", h, suffix)
+    if diff.abs() < day_ms {
+        let hours = diff as f64 / (3600.0 * 1000.0);
+        if hours.abs() < 1.0 {
+            let m = (hours * 60.0).abs().round().max(1.0) as i64;
+            return Some(if diff < 0 {
+                format!("{}分钟前", m)
+            } else {
+                format!("{}分钟后", m)
+            });
         }
-    } else if diff_days == 0 {
-        "今天".to_string()
-    } else if diff_days == 1 {
+        let h = hours.abs().round() as i64;
+        return Some(if diff < 0 {
+            format!("{}小时前", h)
+        } else {
+            format!("{}小时后", h)
+        });
+    }
+
+    let d = days_between(now, ms);
+    Some(if d == 1 {
         "明天".to_string()
-    } else if diff_days == -1 {
+    } else if d == -1 {
         "昨天".to_string()
-    } else if diff_days > 0 {
-        format!("{}天后", diff_days)
+    } else if d > 0 {
+        format!("{}天后", d)
     } else {
-        format!("逾期{}天", -diff_days)
-    };
-    Some(text)
+        format!("逾期{}天", -d)
+    })
+}
+
+/// Compact relative description of when a task was completed, for the Done view.
+/// Returns `None` when `ms` is `None`. Examples: "3分钟前", "2小时前", "昨天", "3天前".
+pub fn relative_past(ms: Option<i64>) -> Option<String> {
+    let ms = ms?;
+    let now = now_ms();
+    let diff = now - ms;
+    if diff < 0 {
+        return None;
+    }
+    let day_ms = 24 * 3600 * 1000i64;
+    if diff < day_ms {
+        let hours = diff as f64 / (3600.0 * 1000.0);
+        if hours < 1.0 {
+            let m = (hours * 60.0).round().max(1.0) as i64;
+            return Some(format!("{}分钟前", m));
+        }
+        let h = hours.round() as i64;
+        return Some(format!("{}小时前", h));
+    }
+    let d = days_between(ms, now);
+    if d <= 1 {
+        Some("昨天".to_string())
+    } else {
+        Some(format!("{}天前", d))
+    }
 }
 
 /// Whether a due/scheduled timestamp is overdue (strictly before now).

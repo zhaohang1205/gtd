@@ -224,6 +224,7 @@ mod tests {
             started_at: None,
             completed_at: None,
             archived_at: None,
+            archive_reason: None,
             updated_at: 0,
             delegated_to: None,
             checklist: vec![],

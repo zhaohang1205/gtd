@@ -37,7 +37,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<Task> {
     let mut stmt = conn.prepare(
         "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist \
+                delegated_to,checklist,archive_reason \
          FROM tasks WHERE id = ?1",
     )?;
     let mut rows = stmt.query_map([id], row_to_task)?;
@@ -158,31 +158,41 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
     let tx = conn.unchecked_transaction()?;
 
     if to_status == task::Status::Done {
-        if let (Some(rrule), Some(start)) = (&t.rrule, t.scheduled_start_at) {
-            if let Ok(occ) = time::rrule_occurrences(rrule, start, 366) {
-                if let Some(next) = occ.into_iter().find(|m| *m > start) {
-                    let duration = t.scheduled_end_at.unwrap_or(start) - start;
+        // 循环任务：把起点（排程开始时间或截止时间）推进到下一次发生，继续排程。
+        // 兼容仅有 due_at + rrule（如快速录入 `~time rrule=...`）的任务。
+        if let Some(rrule) = &t.rrule {
+            let anchor = t.scheduled_start_at.or(t.due_at);
+            if let Some(start) = anchor {
+                if let Ok(occ) = time::rrule_occurrences(rrule, start, 366) {
+                    if let Some(next) = occ.into_iter().find(|m| *m > start) {
+                        let duration = t.scheduled_end_at.unwrap_or(start) - start;
 
-                    log_event(
-                        &tx,
-                        id,
-                        event::EV_HABIT_COMPLETED,
-                        Some(&from.to_string()),
-                        Some(&task::Status::Done.to_string()),
-                        None,
-                    )?;
+                        log_event(
+                            &tx,
+                            id,
+                            event::EV_HABIT_COMPLETED,
+                            Some(&from.to_string()),
+                            Some(&task::Status::Done.to_string()),
+                            None,
+                        )?;
 
-                    t.scheduled_start_at = Some(next);
-                    t.scheduled_end_at = Some(next + duration);
-                    t.status = task::Status::Scheduled;
-                    t.updated_at = now;
+                        if t.scheduled_start_at.is_some() {
+                            t.scheduled_start_at = Some(next);
+                            t.scheduled_end_at = Some(next + duration);
+                        }
+                        if t.scheduled_start_at.is_none() && t.due_at.is_some() {
+                            t.due_at = Some(next);
+                        }
+                        t.status = task::Status::Scheduled;
+                        t.updated_at = now;
 
-                    tx.execute(
-                        "UPDATE tasks SET status=?1, clarified_at=?2, completed_at=?3, updated_at=?4, started_at=?5, scheduled_start_at=?6, scheduled_end_at=?7 WHERE id=?8",
-                        rusqlite::params![t.status.to_string(), t.clarified_at, t.completed_at, t.updated_at, t.started_at, t.scheduled_start_at, t.scheduled_end_at, id],
-                    )?;
-                    tx.commit()?;
-                    return Ok(t);
+                        tx.execute(
+                            "UPDATE tasks SET status=?1, clarified_at=?2, completed_at=?3, updated_at=?4, started_at=?5, scheduled_start_at=?6, scheduled_end_at=?7, due_at=?8 WHERE id=?9",
+                            rusqlite::params![t.status.to_string(), t.clarified_at, t.completed_at, t.updated_at, t.started_at, t.scheduled_start_at, t.scheduled_end_at, t.due_at, id],
+                        )?;
+                        tx.commit()?;
+                        return Ok(t);
+                    }
                 }
             }
         }
@@ -317,14 +327,19 @@ pub fn schedule(
 }
 
 pub fn archive(conn: &Connection, id: &str) -> Result<Task> {
-    let _ = get(conn, id)?;
+    let t = get(conn, id)?;
     let now = time::now_ms();
+    let reason = if t.status == task::Status::Done {
+        "completed"
+    } else {
+        "deleted"
+    };
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE tasks SET archived_at=?1, updated_at=?2 WHERE id=?3",
-        rusqlite::params![now, now, id],
+        "UPDATE tasks SET archived_at=?1, archive_reason=?2, updated_at=?3 WHERE id=?4",
+        rusqlite::params![now, reason, now, id],
     )?;
-    log_event(&tx, id, event::EV_ARCHIVED, None, None, None)?;
+    log_event(&tx, id, event::EV_ARCHIVED, None, None, Some(reason))?;
     tx.commit()?;
     get(conn, id)
 }
@@ -335,7 +350,7 @@ pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
     let now = time::now_ms();
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "UPDATE tasks SET archived_at=NULL, updated_at=?1 WHERE id=?2",
+        "UPDATE tasks SET archived_at=NULL, archive_reason=NULL, updated_at=?1 WHERE id=?2",
         rusqlite::params![now, id],
     )?;
     log_event(&tx, id, event::EV_RESTORED, None, None, None)?;
@@ -348,7 +363,7 @@ pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
     let mut stmt = conn.prepare(
         "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist \
+                delegated_to,checklist,archive_reason \
          FROM tasks WHERE archived_at IS NOT NULL \
          ORDER BY archived_at DESC",
     )?;
@@ -371,7 +386,7 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
     let mut sql = String::from(
         "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
                 due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist \
+                delegated_to,checklist,archive_reason \
          FROM tasks WHERE archived_at IS NULL",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -482,5 +497,6 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         updated_at: r.get(13)?,
         delegated_to,
         checklist: serde_json::from_str(&cl_str).unwrap_or_default(),
+        archive_reason: r.get(16)?,
     })
 }

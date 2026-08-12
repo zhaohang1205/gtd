@@ -27,5 +27,11 @@ pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
         conn.pragma_update(None, "user_version", 3)?;
     }
 
+    if current_version < 4 {
+        let sql5 = include_str!("../../migrations/0005_add_archive_reason.sql");
+        conn.execute_batch(sql5)?;
+        conn.pragma_update(None, "user_version", 4)?;
+    }
+
     Ok(())
 }

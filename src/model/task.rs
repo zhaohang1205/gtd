@@ -67,6 +67,7 @@ pub struct Task {
     pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub archived_at: Option<i64>,
+    pub archive_reason: Option<String>,
     pub updated_at: i64,
     pub delegated_to: Option<String>,
     pub checklist: Vec<ChecklistItem>,

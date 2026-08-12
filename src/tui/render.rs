@@ -242,7 +242,9 @@ impl<'a> AppRender for App<'a> {
                 Mode::FilteringTag => " 过滤标签 (Context) ",
                 Mode::CreatingTag => " 新增自定义标签 (输入标签名称，按 Enter 保存) ",
                 Mode::EditingDue => " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
-                Mode::EditingRrule => " 循环规则? (空=清除, 如 FREQ=WEEKLY;BYDAY=SA,SU) ",
+                Mode::EditingRrule => {
+                    " 循环规则? (空=清除, 如 *2w[1,3] 每两周周一周三, 或 FREQ=WEEKLY;BYDAY=SA,SU) "
+                }
                 Mode::EditingDelegated => " 委派给? (空=清除) ",
                 Mode::ConfiguringPomo => {
                     " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) "
@@ -258,7 +260,7 @@ impl<'a> AppRender for App<'a> {
                 text_lines.push(Line::from(""));
                 if self.input.trim().is_empty() {
                     text_lines.push(Line::from(Span::styled(
-                        " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  !优先级 (如 !a)",
+                        " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3])  |  !优先级 (如 !a)",
                         Style::default().fg(self.theme.text_dim),
                     )));
                 } else {
@@ -673,7 +675,7 @@ impl<'a> AppRender for App<'a> {
             ("h/l", "切换面板 (左/中/右栏)"),
             ("j/k", "上下移动列表选项"),
             ("1-9", "切换视图 (9=标签库, 8=归档箱)"),
-            ("T/M", "今日 / 明日视图"),
+            ("⇧J/⇧K", "今日 / 明日视图 (Shift+J / Shift+K)"),
             ("/", "全局搜索 (标题与备注)"),
             ("f", "情境/标签过滤 (Context)"),
             ("a", "快速捕获任务 (Inbox)"),
@@ -823,6 +825,11 @@ impl<'a> AppRender for App<'a> {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务"),
+            ]),
+            Line::from(vec![
+                Span::raw("  快速录入简写: "),
+                Span::styled("*2w[1,3]", Style::default().fg(Color::LightBlue)),
+                Span::raw(" = 每2周周一、周三  (星期用 1-7, 0=周日; 也可写 *mo,we)"),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -1017,7 +1024,7 @@ impl<'a> AppRender for App<'a> {
             lines.push(Line::from(""));
         };
 
-        add_group(&[('T', View::Today), ('M', View::Tomorrow)], "  [Day]");
+        add_group(&[('J', View::Today), ('K', View::Tomorrow)], "  [Day] ⇧+");
         add_group(&[('1', View::Inbox), ('2', View::Next)], "  [Active]");
         add_group(
             &[
@@ -1180,15 +1187,30 @@ impl<'a> AppRender for App<'a> {
                     ),
                 ]));
 
-                // 状态
-                let st_color = ui::status_color(&d.task.status);
-                lines.push(Line::from(vec![
-                    Span::styled("状态: ", Style::default().fg(self.theme.text_dim)),
-                    Span::styled(
-                        status_cn(d.task.status),
-                        Style::default().fg(st_color).add_modifier(Modifier::BOLD),
-                    ),
-                ]));
+                // 状态 / 归档（归档任务只展示原因与时间，不再显示已完成/逾期）
+                if let Some(reason) = &d.task.archive_reason {
+                    let reason_cn = match reason.as_str() {
+                        "completed" => "[完成]",
+                        "deleted" => "[删除]",
+                        _ => "[归档]",
+                    };
+                    lines.push(Line::from(vec![
+                        Span::styled("归档: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            format!("{} {}", reason_cn, time::format_local(d.task.archived_at)),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
+                    ]));
+                } else {
+                    let st_color = ui::status_color(&d.task.status);
+                    lines.push(Line::from(vec![
+                        Span::styled("状态: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            status_cn(d.task.status),
+                            Style::default().fg(st_color).add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                }
 
                 // 截止时间
                 lines.push(Line::from(vec![
@@ -1317,6 +1339,8 @@ impl<'a> AppRender for App<'a> {
                     let event_cn = match e.event_type.as_str() {
                         "created" => "创建",
                         "status_change" => "流转",
+                        event::EV_COMPLETED => "完成",
+                        event::EV_ARCHIVED => "归档",
                         event::EV_POMODORO => "专注",
                         event::EV_HABIT_COMPLETED => "习惯",
                         event::EV_RESTORED => "恢复",

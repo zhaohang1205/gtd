@@ -91,14 +91,17 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
 /// The "effective due" of a task: for recurring tasks the next occurrence on or
 /// after now; otherwise due_at or scheduled_start_at. Used for sorting/filtering.
 pub(crate) fn effective_due(task: &Task) -> Option<i64> {
-    if let (Some(rr), Some(start)) = (&task.rrule, task.scheduled_start_at) {
-        let now = crate::time::now_ms();
-        if let Ok(occ) = crate::time::rrule_occurrences(rr, start, 366) {
-            if let Some(next) = occ.into_iter().find(|m| *m >= now) {
-                return Some(next);
+    if let Some(rr) = &task.rrule {
+        let anchor = task.scheduled_start_at.or(task.due_at);
+        if let Some(start) = anchor {
+            let now = crate::time::now_ms();
+            if let Ok(occ) = crate::time::rrule_occurrences(rr, start, 366) {
+                if let Some(next) = occ.into_iter().find(|m| *m >= now) {
+                    return Some(next);
+                }
             }
+            return Some(start);
         }
-        return Some(start);
     }
     task.due_at.or(task.scheduled_start_at)
 }
@@ -113,10 +116,13 @@ pub(crate) fn occurs_in_window(task: &Task, start: i64, end: i64) -> bool {
 /// The first occurrence/due of `task` falling inside `[start, end]` (None if
 /// the task has nothing scheduled in that window).
 pub(crate) fn window_due(task: &Task, start: i64, end: i64) -> Option<i64> {
-    if let (Some(rr), Some(anchor)) = (&task.rrule, task.scheduled_start_at) {
-        if let Ok(occ) = crate::time::rrule_occurrences(rr, anchor, 366) {
-            if let Some(m) = occ.into_iter().find(|m| *m >= start && *m <= end) {
-                return Some(m);
+    if let Some(rr) = &task.rrule {
+        let anchor = task.scheduled_start_at.or(task.due_at);
+        if let Some(a) = anchor {
+            if let Ok(occ) = crate::time::rrule_occurrences(rr, a, 366) {
+                if let Some(m) = occ.into_iter().find(|m| *m >= start && *m <= end) {
+                    return Some(m);
+                }
             }
         }
         return None;

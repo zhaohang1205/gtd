@@ -157,24 +157,39 @@ pub fn parse_rrule_shorthand(s: &str) -> String {
         }
     }
 
+    // "2w[1,3]" / "w[mo,we]" / "2w[0,7]" → 每 N 周的指定星期
+    if lower.contains('[') && lower.ends_with(']') {
+        if let Some(open) = lower.find('[') {
+            let head = &lower[..open];
+            let body = &lower[open + 1..lower.len() - 1];
+            if let Some(interval) = parse_weekly_head(head) {
+                if let Some(days) = parse_day_codes(body) {
+                    if !days.is_empty() {
+                        let mut out = String::from("FREQ=WEEKLY");
+                        if let Some(iv) = interval {
+                            if iv > 1 {
+                                out.push_str(&format!(";INTERVAL={}", iv));
+                            }
+                        }
+                        out.push_str(&format!(";BYDAY={}", days.join(",")));
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+
     // Try to match comma separated days like "mon,we,fri"
     let mut days = Vec::new();
     let mut valid = true;
     for part in lower.split(',') {
-        let day = match part.trim() {
-            "mo" | "mon" | "monday" => "MO",
-            "tu" | "tue" | "tuesday" => "TU",
-            "we" | "wed" | "wednesday" => "WE",
-            "th" | "thu" | "thursday" => "TH",
-            "fr" | "fri" | "friday" => "FR",
-            "sa" | "sat" | "saturday" => "SA",
-            "su" | "sun" | "sunday" => "SU",
-            _ => {
+        match day_code(part.trim()) {
+            Some(code) => days.push(code),
+            None => {
                 valid = false;
                 break;
             }
-        };
-        days.push(day);
+        }
     }
     if valid && !days.is_empty() {
         return format!("FREQ=WEEKLY;BYDAY={}", days.join(","));
@@ -182,6 +197,57 @@ pub fn parse_rrule_shorthand(s: &str) -> String {
 
     // fallback
     s.to_string()
+}
+
+/// Map a weekday token (name or number) to its two-letter RRULE code.
+/// Numbers follow ISO: 1=周一 … 7=周日, 0=周日(别名)。
+fn day_code(part: &str) -> Option<&'static str> {
+    let p = part.to_lowercase();
+    match p.as_str() {
+        "mo" | "mon" | "monday" | "1" => Some("MO"),
+        "tu" | "tue" | "tuesday" | "2" => Some("TU"),
+        "we" | "wed" | "wednesday" | "3" => Some("WE"),
+        "th" | "thu" | "thursday" | "4" => Some("TH"),
+        "fr" | "fri" | "friday" | "5" => Some("FR"),
+        "sa" | "sat" | "saturday" | "6" => Some("SA"),
+        "su" | "sun" | "sunday" | "7" | "0" => Some("SU"),
+        _ => None,
+    }
+}
+
+/// Parse the head of a bracketed weekly shorthand (empty or `<N>w`), returning
+/// the interval (None when omitted). Only WEEKLY is supported since BYDAY only
+/// expands for weekly recurrences.
+fn parse_weekly_head(head: &str) -> Option<Option<u32>> {
+    if head.is_empty() {
+        return Some(None);
+    }
+    let h = head.to_lowercase();
+    let last = h.chars().last()?;
+    if last != 'w' {
+        return None;
+    }
+    let num_part = &h[..h.len() - 1];
+    if num_part.is_empty() {
+        return Some(None);
+    }
+    num_part.parse::<u32>().ok().map(Some)
+}
+
+/// Parse a comma-separated weekday list (numbers or names) into RRULE codes,
+/// deduplicated in first-appearance order.
+fn parse_day_codes(body: &str) -> Option<Vec<&'static str>> {
+    if body.trim().is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for part in body.split(',') {
+        let code = day_code(part.trim())?;
+        if !out.contains(&code) {
+            out.push(code);
+        }
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -220,5 +286,49 @@ mod tests {
         let q = parse_quick_add("无效 !z 保留");
         assert_eq!(q.title, "无效 !z 保留");
         assert_eq!(q.priority, None);
+    }
+
+    #[test]
+    fn rrule_bracket_shorthand() {
+        // 每两周的周一、周三
+        assert_eq!(
+            parse_rrule_shorthand("2w[1,3]"),
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE"
+        );
+        // 无间隔 → 每周
+        assert_eq!(parse_rrule_shorthand("w[1,3]"), "FREQ=WEEKLY;BYDAY=MO,WE");
+        assert_eq!(parse_rrule_shorthand("[1,3]"), "FREQ=WEEKLY;BYDAY=MO,WE");
+        // 名称形式 + 大小写不敏感
+        assert_eq!(
+            parse_rrule_shorthand("2W[Mon,WE]"),
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE"
+        );
+        // 0/7 均为周日, 去重
+        assert_eq!(
+            parse_rrule_shorthand("2w[0,7]"),
+            "FREQ=WEEKLY;INTERVAL=2;BYDAY=SU"
+        );
+        // interval=1 省略
+        assert_eq!(parse_rrule_shorthand("1w[5,6]"), "FREQ=WEEKLY;BYDAY=FR,SA");
+    }
+
+    #[test]
+    fn rrule_bracket_shorthand_quick_add() {
+        let q = parse_quick_add("上体育课 *2w[1,3] ~明天");
+        assert_eq!(q.title, "上体育课");
+        assert_eq!(
+            q.rrule.as_deref(),
+            Some("FREQ=WEEKLY;INTERVAL=2;BYDAY=MO,WE")
+        );
+        assert_eq!(q.time_str.as_deref(), Some("明天"));
+    }
+
+    #[test]
+    fn rrule_bracket_invalid_falls_through() {
+        // 非 weekly 单位不支持括号, 原样返回
+        assert_eq!(parse_rrule_shorthand("2d[1,3]"), "2d[1,3]");
+        // 无效星期号
+        assert_eq!(parse_rrule_shorthand("2w[8]"), "2w[8]");
+        assert_eq!(parse_rrule_shorthand("2w[1,x]"), "2w[1,x]");
     }
 }

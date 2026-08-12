@@ -163,6 +163,8 @@ pub(crate) struct Row {
     pub(crate) done: Option<usize>,
     /// 完成进度：总数。
     pub(crate) total: Option<usize>,
+    /// 归档原因（仅归档箱视图非空）：completed | deleted。
+    pub(crate) archive_reason: Option<String>,
 }
 
 pub(crate) struct DetailData {
@@ -201,6 +203,10 @@ pub(crate) struct App<'a> {
     pub(crate) popup: Option<Popup>,
     pub(crate) last_tick_ms: i64,
     pub(crate) notified_events: std::collections::HashSet<String>,
+    /// 今日/明日视图任务数缓存：仅在 `refresh`（切视图/操作后）时重算，
+    /// 避免引导栏计数每帧都做一次 rrule 展开。
+    pub(crate) today_count: usize,
+    pub(crate) tomorrow_count: usize,
 }
 
 impl<'a> App<'a> {
@@ -235,6 +241,8 @@ impl<'a> App<'a> {
             popup: None,
             last_tick_ms: 0,
             notified_events: std::collections::HashSet::new(),
+            today_count: 0,
+            tomorrow_count: 0,
         };
         app.refresh()?;
 
@@ -420,8 +428,8 @@ impl<'a> App<'a> {
                 .map(|t| t.len())
                 .unwrap_or(0),
             View::Tags => tags::list_tags(self.conn).map(|t| t.len()).unwrap_or(0),
-            View::Today => self.day_tasks(0, true).len(),
-            View::Tomorrow => self.day_tasks(1, false).len(),
+            View::Today => self.today_count,
+            View::Tomorrow => self.tomorrow_count,
             _ => match v.status() {
                 Some(s) => tasks::count(
                     self.conn,
@@ -443,7 +451,9 @@ impl<'a> App<'a> {
     }
 
     /// 今日/明日视图：所有未完成、未归档任务，其到期/循环发生时间落在指定
-    /// 本地日（含逾期，`include_overdue=true` 时）。返回 (任务, 展示用到期时间)。
+    /// 本地日（含逾期，`include_overdue=true` 时）。明日视图等价于"假设明天
+    /// 已到来"，因此也带上逾期（今天及更早到期但未完成）的任务。返回
+    /// (任务, 展示用到期时间)。
     fn day_tasks(&self, offset_days: i64, include_overdue: bool) -> Vec<(task::Task, i64)> {
         let (start, end) = crate::time::local_day_bounds(offset_days);
         let mut tags = vec![];
@@ -483,12 +493,15 @@ impl<'a> App<'a> {
 
     pub(crate) fn refresh(&mut self) -> Result<()> {
         self.items.clear();
+        // 缓存今日/明日数量：切视图/操作时才计算，供引导栏徽标使用。
+        self.today_count = self.day_tasks(0, true).len();
+        self.tomorrow_count = self.day_tasks(1, true).len();
         match self.view {
             View::Today | View::Tomorrow => {
                 let (offset, overdue) = if self.view == View::Today {
                     (0, true)
                 } else {
-                    (1, false)
+                    (1, true)
                 };
                 let mut ts = self.day_tasks(offset, overdue);
                 ts.sort_by_key(|(_, due)| *due);
@@ -515,6 +528,7 @@ impl<'a> App<'a> {
                             indent: 0,
                             done: None,
                             total: None,
+                            archive_reason: None,
                         });
                     }
                 }
@@ -616,10 +630,9 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn next_view(&mut self, delta: isize) {
+        // 今日/明日视图不参与方向键循环，只通过 Shift+J / Shift+K 快捷键调出。
         let views = [
             View::Inbox,
-            View::Today,
-            View::Tomorrow,
             View::Next,
             View::Waiting,
             View::Scheduled,
@@ -630,7 +643,13 @@ impl<'a> App<'a> {
             View::Tags,
             View::Archived,
         ];
-        let idx = views.iter().position(|v| *v == self.view).unwrap_or(0) as isize;
+        // 若当前停在日视图，映射到相邻主视图，避免方向键跳到随机位置。
+        let anchor = match self.view {
+            View::Today => View::Inbox,
+            View::Tomorrow => View::Next,
+            v => v,
+        };
+        let idx = views.iter().position(|v| *v == anchor).unwrap_or(0) as isize;
         let mut next_idx = idx + delta;
         if next_idx < 0 {
             next_idx = views.len() as isize - 1;

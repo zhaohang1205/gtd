@@ -23,11 +23,11 @@ GTD terminal task manager (`gtp`) — a Rust binary (edition 2021, **no lib targ
 ## Non-obvious rules (violating these breaks things)
 
 - **Timestamps**: store UTC ms INTEGER, never formatted strings. All time math goes through `time.rs`; display via `format_local`.
-- **Migrations**: never edit existing `migrations/*.sql`. Add a new file plus a new version block in `migrate.rs` (currently v1 = 0001+0002, v2 = +0003, v3 = +0004). Migration SQL is idempotent (IF NOT EXISTS / INSERT OR IGNORE).
+- **Migrations**: never edit existing `migrations/*.sql`. Add a new file plus a new version block in `migrate.rs` (currently v1 = 0001+0002, v2 = +0003, v3 = +0004, v4 = +0005). Migration SQL is idempotent (IF NOT EXISTS / INSERT OR IGNORE).
 - **New event types**: add a const in `model/event.rs` AND keep the `task_events` comment in `migrations/0001_init.sql` in sync.
 - **DB paths**: `~/.config/gtp/gtp.db` and `~/.config/gtp/pomo.json` both derive from `dirs::config_dir()` — never hardcode.
 - **ID resolution**: commands accept a task id, a unique id-prefix, or an exact title (`resolve_project`).
-- **Archive is soft-delete**: sets `archived_at`; list queries filter `archived_at IS NULL`. `Restore` clears it.
+- **Archive is soft-delete**: sets `archived_at` and `archive_reason` (`completed` when the task was Done at archive time, else `deleted`); list queries filter `archived_at IS NULL`. `Restore` clears both. The Archived view shows reason + archive time, never the old status or overdue.
 - **Recurring tasks**: a task with `rrule` reschedules to its next occurrence on `Done` instead of completing. Sorting/filtering uses `effective_due` (`commands/mod.rs`), not the raw due column.
 - **Status lifecycle**: `Inbox → Next / Scheduled / Waiting / Someday / Reference → Done`; `transition` in `repo/tasks.rs` sets the matching `*_at` timestamp.
 - **Pomodoro**: `pomo start` spawns a background `gtp pomo daemon` (ticks every second, writes `pomo.json`, sends `notify-send`). `pomo waybar` emits JSON for a waybar module. `kill_daemon` (pomo.rs) deliberately waits for the old process to exit — concurrent daemons corrupt `pomo.json`; don't "optimize" that away.

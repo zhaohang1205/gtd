@@ -67,10 +67,11 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
         .iter()
         .map(|r| {
             let status_enum = r.status.parse::<Status>().unwrap_or(Status::Inbox);
-            let letter = status_letter(&status_enum);
-            let color = status_color(&status_enum);
             let is_selected = app.mode == Mode::Visual && app.selected_ids.contains(&r.id);
             let is_focus_task = active_pomo_task_id.as_deref() == Some(&r.id);
+            let is_done = status_enum == Status::Done;
+            // 归档箱：用归档原因取代状态语义，不再显示"已完成/逾期"。
+            let is_archived = r.archive_reason.is_some();
 
             let indent = "  ".repeat(r.indent);
             let sel_prefix = if is_selected {
@@ -81,14 +82,41 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
                 ""
             };
 
-            // 到期：相对时间 + 逾期红色强调
-            let due_text = time::relative_due(r.due)
-                .map(|s| format!("~{}", s))
-                .unwrap_or_default();
-            let due_color = if time::is_overdue(r.due) {
+            // 到期：相对时间 + 逾期红色强调（已完成/归档任务显示过去时间，不再标红）
+            let reason_cn = if is_archived {
+                match r.archive_reason.as_deref() {
+                    Some("completed") => "[完成]",
+                    Some("deleted") => "[删除]",
+                    _ => "[归档]",
+                }
+            } else {
+                ""
+            };
+            let due_text = if is_archived || is_done {
+                time::relative_past(r.due)
+                    .map(|s| format!("~{}", s))
+                    .unwrap_or_default()
+            } else {
+                time::relative_due(r.due)
+                    .map(|s| format!("~{}", s))
+                    .unwrap_or_default()
+            };
+            let due_color = if is_archived || is_done {
+                Color::DarkGray
+            } else if time::is_overdue(r.due) {
                 Color::Red
             } else {
                 Color::DarkGray
+            };
+
+            let (letter, color) = if is_archived {
+                match r.archive_reason.as_deref() {
+                    Some("completed") => ("√", Color::DarkGray),
+                    Some("deleted") => ("×", Color::DarkGray),
+                    _ => ("?", Color::DarkGray),
+                }
+            } else {
+                (status_letter(&status_enum), status_color(&status_enum))
             };
 
             let mut spans = vec![Span::styled(
@@ -143,10 +171,10 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
                 }
             }
 
-            // 到期
-            if !due_text.is_empty() {
+            // 到期 / 归档时间
+            if !due_text.is_empty() || !reason_cn.is_empty() {
                 spans.push(Span::styled(
-                    format!("  {}", due_text),
+                    format!("  {}{}", reason_cn, due_text),
                     Style::default()
                         .fg(due_color)
                         .add_modifier(if due_color == Color::Red {

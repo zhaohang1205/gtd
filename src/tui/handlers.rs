@@ -138,8 +138,8 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.show_syntax = !self.show_syntax;
             }
-            KeyCode::Char('T') => self.set_view(View::Today),
-            KeyCode::Char('M') => self.set_view(View::Tomorrow),
+            KeyCode::Char('J') => self.set_view(View::Today),
+            KeyCode::Char('K') => self.set_view(View::Tomorrow),
             KeyCode::Char('r') => {
                 self.is_reviewing = true;
                 self.review_step = 1;
