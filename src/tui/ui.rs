@@ -85,19 +85,19 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
             // 到期：相对时间 + 逾期红色强调（已完成/归档任务显示过去时间，不再标红）
             let reason_cn = if is_archived {
                 match r.archive_reason.as_deref() {
-                    Some("completed") => "[完成]",
-                    Some("deleted") => "[删除]",
-                    _ => "[归档]",
+                    Some("completed") => crate::tr!(app.lang, "[完成]", "[Done]"),
+                    Some("deleted") => crate::tr!(app.lang, "[删除]", "[Deleted]"),
+                    _ => crate::tr!(app.lang, "[归档]", "[Archived]"),
                 }
             } else {
                 ""
             };
             let due_text = if is_archived || is_done {
-                time::relative_past(r.due)
+                time::relative_past(app.lang, r.due)
                     .map(|s| format!("~{}", s))
                     .unwrap_or_default()
             } else {
-                time::relative_due(r.due)
+                time::relative_due(app.lang, r.due)
                     .map(|s| format!("~{}", s))
                     .unwrap_or_default()
             };

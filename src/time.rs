@@ -67,7 +67,7 @@ fn days_between(from_ms: i64, to_ms: i64) -> i64 {
 /// Returns `None` when `ms` is `None`. Examples: "逾期2天", "明天", "3天后",
 /// "5小时前", "2分钟后". Within ±24h it reports precise minutes/hours (past or
 /// future); beyond that it classifies by local calendar day.
-pub fn relative_due(ms: Option<i64>) -> Option<String> {
+pub fn relative_due(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> {
     let ms = ms?;
     let now = now_ms();
     let diff = ms - now;
@@ -78,34 +78,34 @@ pub fn relative_due(ms: Option<i64>) -> Option<String> {
         if hours.abs() < 1.0 {
             let m = (hours * 60.0).abs().round().max(1.0) as i64;
             return Some(if diff < 0 {
-                format!("{}分钟前", m)
+                crate::tr!(lang, "{}分钟前", "{}m ago").replace("{}", &m.to_string())
             } else {
-                format!("{}分钟后", m)
+                crate::tr!(lang, "{}分钟后", "in {}m").replace("{}", &m.to_string())
             });
         }
         let h = hours.abs().round() as i64;
         return Some(if diff < 0 {
-            format!("{}小时前", h)
+            crate::tr!(lang, "{}小时前", "{}h ago").replace("{}", &h.to_string())
         } else {
-            format!("{}小时后", h)
+            crate::tr!(lang, "{}小时后", "in {}h").replace("{}", &h.to_string())
         });
     }
 
     let d = days_between(now, ms);
     Some(if d == 1 {
-        "明天".to_string()
+        crate::tr!(lang, "明天", "tomorrow").to_string()
     } else if d == -1 {
-        "昨天".to_string()
+        crate::tr!(lang, "昨天", "yesterday").to_string()
     } else if d > 0 {
-        format!("{}天后", d)
+        crate::tr!(lang, "{}天后", "in {}d").replace("{}", &d.to_string())
     } else {
-        format!("逾期{}天", -d)
+        crate::tr!(lang, "逾期{}天", "{}d overdue").replace("{}", &(-d).to_string())
     })
 }
 
 /// Compact relative description of when a task was completed, for the Done view.
 /// Returns `None` when `ms` is `None`. Examples: "3分钟前", "2小时前", "昨天", "3天前".
-pub fn relative_past(ms: Option<i64>) -> Option<String> {
+pub fn relative_past(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> {
     let ms = ms?;
     let now = now_ms();
     let diff = now - ms;
@@ -117,16 +117,16 @@ pub fn relative_past(ms: Option<i64>) -> Option<String> {
         let hours = diff as f64 / (3600.0 * 1000.0);
         if hours < 1.0 {
             let m = (hours * 60.0).round().max(1.0) as i64;
-            return Some(format!("{}分钟前", m));
+            return Some(crate::tr!(lang, "{}分钟前", "{}m ago").replace("{}", &m.to_string()));
         }
         let h = hours.round() as i64;
-        return Some(format!("{}小时前", h));
+        return Some(crate::tr!(lang, "{}小时前", "{}h ago").replace("{}", &h.to_string()));
     }
     let d = days_between(ms, now);
     if d <= 1 {
-        Some("昨天".to_string())
+        Some(crate::tr!(lang, "昨天", "yesterday").to_string())
     } else {
-        Some(format!("{}天前", d))
+        Some(crate::tr!(lang, "{}天前", "{}d ago").replace("{}", &d.to_string()))
     }
 }
 

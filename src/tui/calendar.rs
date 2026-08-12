@@ -88,12 +88,14 @@ impl CalendarState {
         None
     }
 
-    pub fn render(&self, f: &mut Frame, area: Rect) {
+    pub fn render(&self, f: &mut Frame, area: Rect, lang: crate::i18n::Lang) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow))
-            .title(format!(
+            .title(crate::tr!(
+                lang,
                 " {}年 {}月 ",
+                " {} {} ",
                 self.cursor.year(),
                 self.cursor.month()
             ));
@@ -102,8 +104,16 @@ impl CalendarState {
 
         let mut rows = vec![];
         rows.push(
-            Row::new(vec!["日", "一", "二", "三", "四", "五", "六"])
-                .style(Style::default().fg(Color::DarkGray)),
+            Row::new(vec![
+                crate::tr!(lang, "日", "Su"),
+                crate::tr!(lang, "一", "Mo"),
+                crate::tr!(lang, "二", "Tu"),
+                crate::tr!(lang, "三", "We"),
+                crate::tr!(lang, "四", "Th"),
+                crate::tr!(lang, "五", "Fr"),
+                crate::tr!(lang, "六", "Sa"),
+            ])
+            .style(Style::default().fg(Color::DarkGray)),
         );
 
         let first_day =
@@ -179,9 +189,17 @@ impl CalendarState {
         f.render_widget(table, area);
 
         let hint = if self.start_date.is_none() {
-            " 回车:选择起始日期 | Esc:退出 "
+            crate::tr!(
+                lang,
+                " 回车:选择起始日期 | Esc:退出 ",
+                " Enter: pick start date | Esc: exit "
+            )
         } else {
-            " 回车:选择结束日期 | Esc:重选 "
+            crate::tr!(
+                lang,
+                " 回车:选择结束日期 | Esc:重选 ",
+                " Enter: pick end date | Esc: reselect "
+            )
         };
         let hint_area = Rect::new(
             area.x + 2,

@@ -53,17 +53,20 @@ impl<'a> AppRender for App<'a> {
 
             let step_names = [
                 "",
-                "清空收件箱",
-                "追踪等待事项",
-                "重估将来/也许",
-                "检视已完成",
+                crate::tr!(self.lang, "清空收件箱", "Clear Inbox"),
+                crate::tr!(self.lang, "追踪等待事项", "Follow up Waiting"),
+                crate::tr!(self.lang, "重估将来/也许", "Re-evaluate Someday"),
+                crate::tr!(self.lang, "检视已完成", "Review Done"),
             ];
             let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
 
             let banner = Paragraph::new(Line::from(Span::styled(
-                format!(
+                crate::tr!(
+                    self.lang,
                     " 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ",
-                    self.review_step, step_name
+                    " 🌟 Weekly Review step {}/4: {} ('R' next, 'Esc' exit) ",
+                    self.review_step,
+                    step_name
                 ),
                 Style::default()
                     .bg(Color::Cyan)
@@ -86,20 +89,25 @@ impl<'a> AppRender for App<'a> {
                 let last_title = pomo
                     .last_completed_task_title
                     .as_deref()
-                    .unwrap_or("上一任务");
+                    .unwrap_or(crate::tr!(self.lang, "上一任务", "last task"));
                 let banner = Paragraph::new(Line::from(vec![
                     Span::styled(
-                        format!(
+                        crate::tr!(
+                            self.lang,
                             " 󰗠 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
-                            pomo.today_count, pomo.streak
+                            " 󰗠 Settled: {} tomatoes today (Streak {})  |  ",
+                            pomo.today_count,
+                            pomo.streak
                         ),
                         Style::default()
                             .fg(self.theme.bg)
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        format!(
+                        crate::tr!(
+                            self.lang,
                             "休息已完成  |  再接再厉? 󰄾 [Space/P] 开启新一轮专注 [{}] ",
+                            "Break done  |  Go again? 󰄾 [Space/P] start a new focus [{}] ",
                             last_title
                         ),
                         Style::default()
@@ -173,7 +181,7 @@ impl<'a> AppRender for App<'a> {
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(" {} ", self.view.label()),
+                format!(" {} ", super::view_label(self.lang, self.view)),
                 Style::default()
                     .fg(self.theme.fg)
                     .bg(self.theme.status_bg)
@@ -223,32 +231,72 @@ impl<'a> AppRender for App<'a> {
             && self.mode != Mode::ConfirmArchive
         {
             let title = match self.mode {
-                Mode::Search => " Search Tasks (Title / Notes) ",
-                Mode::EditingTitle => " Edit title ",
-                Mode::Capturing => {
-                    " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) "
+                Mode::Search => {
+                    crate::tr!(
+                        self.lang,
+                        " 搜索任务 (标题 / 备注) ",
+                        " Search Tasks (Title / Notes) "
+                    )
                 }
-                Mode::Tagging => {
-                    " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) "
-                }
-                Mode::SchedulingTimeRRule => {
-                    " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) "
-                }
+                Mode::EditingTitle => crate::tr!(self.lang, " 编辑标题 ", " Edit title "),
+                Mode::Capturing => crate::tr!(
+                    self.lang,
+                    " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
+                    " Quick capture (@tag, Tab to complete: home, work, errands, quick, focus...) "
+                ),
+                Mode::Tagging => crate::tr!(
+                    self.lang,
+                    " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) ",
+                    " Add tags [Tab to complete] (presets: home, work, errands, quick, focus...) "
+                ),
+                Mode::SchedulingTimeRRule => crate::tr!(
+                    self.lang,
+                    " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) ",
+                    " Set time & rrule (format: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) "
+                ),
                 Mode::SchedulingCalendar => "", // Not reached
-                Mode::WaitingWho => " Waiting for who/what? ",
-                Mode::WaitingWhen => " Reminder time? (e.g. +1d, tomorrow 10:00) ",
-                Mode::PlanningTime => " Time? ",
-                Mode::ChecklistAdding => " 新增检查单 ",
-                Mode::FilteringTag => " 过滤标签 (Context) ",
-                Mode::CreatingTag => " 新增自定义标签 (输入标签名称，按 Enter 保存) ",
-                Mode::EditingDue => " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
-                Mode::EditingRrule => {
-                    " 循环规则? (空=清除, 如 *2w[1,3] 每两周周一周三, 或 FREQ=WEEKLY;BYDAY=SA,SU) "
+                Mode::WaitingWho => {
+                    crate::tr!(self.lang, " 等待谁/什么? ", " Waiting for who/what? ")
                 }
-                Mode::EditingDelegated => " 委派给? (空=清除) ",
-                Mode::ConfiguringPomo => {
-                    " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) "
+                Mode::WaitingWhen => crate::tr!(
+                    self.lang,
+                    " 提醒时间? (如 +1d, tomorrow 10:00) ",
+                    " Reminder time? (e.g. +1d, tomorrow 10:00) "
+                ),
+                Mode::PlanningTime => crate::tr!(self.lang, " 预计时间? ", " Time? "),
+                Mode::ChecklistAdding => {
+                    crate::tr!(self.lang, " 新增检查单 ", " Add checklist item ")
                 }
+                Mode::FilteringTag => {
+                    crate::tr!(self.lang, " 过滤标签 (情境) ", " Filter by tag (Context) ")
+                }
+                Mode::CreatingTag => crate::tr!(
+                    self.lang,
+                    " 新增自定义标签 (输入标签名称，按 Enter 保存) ",
+                    " Create custom tag (enter name, Enter to save) "
+                ),
+                Mode::EditingDue => crate::tr!(
+                    self.lang,
+                    " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
+                    " Due time? (empty=clear, e.g. +3d, tomorrow 10:00) "
+                ),
+                Mode::EditingRrule => crate::tr!(
+                    self.lang,
+                    " 循环规则? (空=清除, 如 *2w[1,3] 每两周周一周三, 或 FREQ=WEEKLY;BYDAY=SA,SU) ",
+                    " Recurrence rule? (empty=clear, e.g. *2w[1,3] or FREQ=WEEKLY;BYDAY=SA,SU) "
+                ),
+                Mode::EditingDelegated => {
+                    crate::tr!(
+                        self.lang,
+                        " 委派给? (空=清除) ",
+                        " Delegated to? (empty=clear) "
+                    )
+                }
+                Mode::ConfiguringPomo => crate::tr!(
+                    self.lang,
+                    " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) ",
+                    " Custom pomodoro lengths (format: work;short;long, e.g. 25;5;15) "
+                ),
                 Mode::Normal | Mode::Visual | Mode::ConfirmArchive => "",
             };
 
@@ -260,7 +308,11 @@ impl<'a> AppRender for App<'a> {
                 text_lines.push(Line::from(""));
                 if self.input.trim().is_empty() {
                     text_lines.push(Line::from(Span::styled(
-                        " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3])  |  !优先级 (如 !a)",
+                        crate::tr!(
+                            self.lang,
+                            " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3])  |  !优先级 (如 !a)",
+                            " [syntax] @tag (@work)  |  ~time (~tomorrow, ~+3d, ~18:00)  |  *rrule (*2w[1,3])  |  !priority (!a)"
+                        ),
                         Style::default().fg(self.theme.text_dim),
                     )));
                 } else {
@@ -268,13 +320,16 @@ impl<'a> AppRender for App<'a> {
                     let tokens = tokenize_quick_add(&self.input);
                     if !parsed.title.is_empty() {
                         text_lines.push(Line::from(vec![
-                            Span::styled(" 标题: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                crate::tr!(self.lang, " 标题: ", " Title: "),
+                                Style::default().fg(self.theme.text_dim),
+                            ),
                             Span::raw(parsed.title.clone()),
                         ]));
                     }
                     if !parsed.tags.is_empty() {
                         let mut spans = vec![Span::styled(
-                            " 标签: ",
+                            crate::tr!(self.lang, " 标签: ", " Tags: "),
                             Style::default().fg(self.theme.text_dim),
                         )];
                         for (i, tag) in parsed.tags.iter().enumerate() {
@@ -297,12 +352,15 @@ impl<'a> AppRender for App<'a> {
                                 Style::default().fg(self.theme.text_dim),
                             ),
                             Err(_) => (
-                                "[无效]".to_string(),
+                                crate::tr!(self.lang, "[无效]", "[invalid]").to_string(),
                                 Style::default().fg(self.theme.text_urgent),
                             ),
                         };
                         text_lines.push(Line::from(vec![
-                            Span::styled(" 时间: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                crate::tr!(self.lang, " 时间: ", " Time: "),
+                                Style::default().fg(self.theme.text_dim),
+                            ),
                             Span::styled(
                                 format!("~{}", ts),
                                 Style::default().fg(self.theme.text_success),
@@ -319,7 +377,10 @@ impl<'a> AppRender for App<'a> {
                     {
                         let resolved = parse_rrule_shorthand(&raw);
                         text_lines.push(Line::from(vec![
-                            Span::styled(" 循环: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                crate::tr!(self.lang, " 循环: ", " Rrule: "),
+                                Style::default().fg(self.theme.text_dim),
+                            ),
                             Span::styled(
                                 format!("*{}", raw),
                                 Style::default().fg(self.theme.rrule_fg),
@@ -332,7 +393,10 @@ impl<'a> AppRender for App<'a> {
                         let letter = priority_letter(p).unwrap_or('?');
                         let color = crate::tui::ui::priority_color(p).unwrap_or(self.theme.hl_fg);
                         text_lines.push(Line::from(vec![
-                            Span::styled(" 优先级: ", Style::default().fg(self.theme.text_dim)),
+                            Span::styled(
+                                crate::tr!(self.lang, " 优先级: ", " Priority: "),
+                                Style::default().fg(self.theme.text_dim),
+                            ),
                             Span::styled(
                                 format!("!{}", letter),
                                 Style::default().fg(self.theme.text_success),
@@ -382,7 +446,7 @@ impl<'a> AppRender for App<'a> {
         }
         if self.mode == Mode::SchedulingCalendar {
             let area = self.centered_rect(60, 15, size);
-            self.calendar.render(f, area);
+            self.calendar.render(f, area, self.lang);
         }
 
         if self.show_syntax {
@@ -403,24 +467,41 @@ impl<'a> AppRender for App<'a> {
         if let Some(ref popup) = self.popup {
             match popup {
                 crate::tui::app::Popup::TodayTasks(tasks) => {
-                    let mut lines = vec![Line::from("今日有以下任务需要完成:")];
+                    let mut lines = vec![Line::from(crate::tr!(
+                        self.lang,
+                        "今日有以下任务需要完成:",
+                        "Tasks to complete today:"
+                    ))];
                     lines.push(Line::from(""));
                     for t in tasks.iter().take(10) {
                         lines.push(Line::from(format!(" - {}", t)));
                     }
                     if tasks.len() > 10 {
-                        lines.push(Line::from(format!("   ... 等 {} 个任务", tasks.len())));
+                        lines.push(Line::from(crate::tr!(
+                            self.lang,
+                            "   ... 等 {} 个任务",
+                            "   ... and {} more",
+                            tasks.len()
+                        )));
                     }
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
-                        " [按 Enter 或 Esc 键关闭] ",
+                        crate::tr!(
+                            self.lang,
+                            " [按 Enter 或 Esc 键关闭] ",
+                            " [Press Enter or Esc to close] "
+                        ),
                         Style::default().fg(self.theme.text_dim),
                     )));
 
                     let area = self.centered_rect(50, 15, size);
                     f.render_widget(ratatui::widgets::Clear, area);
                     let block = Block::default()
-                        .title(" 📅 今日任务概览 ")
+                        .title(crate::tr!(
+                            self.lang,
+                            " 📅 今日任务概览 ",
+                            " 📅 Today's Tasks "
+                        ))
                         .borders(Borders::ALL)
                         .border_set(border::ROUNDED)
                         .border_style(Style::default().fg(self.theme.accent));
@@ -432,7 +513,11 @@ impl<'a> AppRender for App<'a> {
                     );
                 }
                 crate::tui::app::Popup::TaskDueNow(_, title) => {
-                    let mut lines = vec![Line::from("有任务已到期，需要立即处理：")];
+                    let mut lines = vec![Line::from(crate::tr!(
+                        self.lang,
+                        "有任务已到期，需要立即处理：",
+                        "A task is due now, handle it now:"
+                    ))];
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
                         format!(" 「{}」 ", title),
@@ -442,14 +527,18 @@ impl<'a> AppRender for App<'a> {
                     )));
                     lines.push(Line::from(""));
                     lines.push(Line::from(Span::styled(
-                        " [Enter] 一键进入番茄钟  |  [Esc] 忽略 ",
+                        crate::tr!(
+                            self.lang,
+                            " [Enter] 一键进入番茄钟  |  [Esc] 忽略 ",
+                            " [Enter] start pomodoro  |  [Esc] dismiss "
+                        ),
                         Style::default().fg(self.theme.text_dim),
                     )));
 
                     let area = self.centered_rect(50, 10, size);
                     f.render_widget(ratatui::widgets::Clear, area);
                     let block = Block::default()
-                        .title(" ⏰ 任务提醒! ")
+                        .title(crate::tr!(self.lang, " ⏰ 任务提醒! ", " ⏰ Task due! "))
                         .borders(Borders::ALL)
                         .border_set(border::ROUNDED)
                         .border_style(Style::default().fg(self.theme.text_urgent));
@@ -482,22 +571,21 @@ impl<'a> AppRender for App<'a> {
         let time_str = format!("{:02}:{:02}", mins, secs);
 
         // ── 阶段配色 ──
-        // ── 阶段配色 ──
         let (phase_icon, ring_color, dim_color, bg_color) = match pomo.phase {
             Phase::Work => (
-                "🍅 专注",
+                crate::tr!(self.lang, "🍅 专注", "🍅 Focus"),
                 Color::Rgb(230, 60, 60),
                 Color::Rgb(70, 25, 25),
                 self.theme.bg,
             ),
             Phase::ShortBreak => (
-                "☕ 小休",
+                crate::tr!(self.lang, "☕ 小休", "☕ Short break"),
                 Color::Rgb(60, 210, 110),
                 Color::Rgb(20, 65, 35),
                 self.theme.bg,
             ),
             Phase::LongBreak => (
-                "🌿 长休",
+                crate::tr!(self.lang, "🌿 长休", "🌿 Long break"),
                 Color::Rgb(60, 150, 230),
                 Color::Rgb(20, 45, 75),
                 self.theme.bg,
@@ -523,7 +611,10 @@ impl<'a> AppRender for App<'a> {
             .split(area);
 
         // ── 1. 当前任务与状态 ──
-        let task_title = pomo.task_title.as_deref().unwrap_or("无标题");
+        let task_title =
+            pomo.task_title
+                .as_deref()
+                .unwrap_or(crate::tr!(self.lang, "无标题", "untitled"));
         let title_line = Line::from(vec![
             Span::styled(
                 format!(" {} ", phase_icon),
@@ -631,19 +722,28 @@ impl<'a> AppRender for App<'a> {
 
         // ── 4. 克制的统计信息 & 快捷键 ──
         let hints = if matches!(pomo.phase, Phase::ShortBreak | Phase::LongBreak) {
-            "󰄾 [Space/P] 下一轮  |  [S] 结束专注"
+            crate::tr!(
+                self.lang,
+                "󰄾 [Space/P] 下一轮  |  [S] 结束专注",
+                "󰄾 [Space/P] next round  |  [S] end focus"
+            )
         } else {
-            "󰄾 [S] 停止番茄钟"
+            crate::tr!(self.lang, "󰄾 [S] 停止番茄钟", "󰄾 [S] stop pomodoro")
         };
 
         let stats_line = Line::from(vec![
             Span::styled(
-                format!(" 🏆 今日完成: {} ", pomo.today_count),
+                crate::tr!(
+                    self.lang,
+                    " 🏆 今日完成: {} ",
+                    " 🏆 Today: {} ",
+                    pomo.today_count
+                ),
                 Style::default().fg(self.theme.text_dim),
             ),
             Span::styled(" • ", Style::default().fg(self.theme.text_dim)),
             Span::styled(
-                format!(" 🔥 连击: {} ", pomo.streak),
+                crate::tr!(self.lang, " 🔥 连击: {} ", " 🔥 Streak: {} ", pomo.streak),
                 Style::default().fg(self.theme.text_dim),
             ),
         ]);
@@ -670,34 +770,181 @@ impl<'a> AppRender for App<'a> {
             .border_set(border::ROUNDED)
             .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(self.theme.accent))
-            .title(" 快捷键指南 (F1/?) ");
-        let keys = [
-            ("h/l", "切换面板 (左/中/右栏)"),
-            ("j/k", "上下移动列表选项"),
-            ("1-9", "切换视图 (9=标签库, 8=归档箱)"),
-            ("⇧J/⇧K", "今日 / 明日视图 (Shift+J / Shift+K)"),
-            ("/", "全局搜索 (标题与备注)"),
-            ("f", "情境/标签过滤 (Context)"),
-            ("a", "快速捕获任务 (Inbox)"),
-            ("n", "编辑长备注 ($EDITOR)"),
-            ("e", "编辑任务标题"),
-            ("d", "修改截止时间 (due)"),
-            ("L", "修改循环规则 (rrule)"),
-            ("W", "修改委派对象 (Delegated)"),
-            ("C", "新增检查单项 / SPC 勾选"),
-            ("r", "开启每周回顾 Hook"),
-            ("Enter", "理清任务 / 标记下一步"),
-            ("c", "日历排期 (Schedule)"),
-            ("w", "标记为等待中 (Waiting)"),
-            ("s", "标记为将来/也许 (Someday)"),
-            ("x", "标记为已完成 (Done)"),
-            ("A/D", "归档任务 (y确认/n取消)"),
-            ("u", "恢复归档箱中的任务"),
-            ("P/S", "开启专注(番茄钟) / 停止专注"),
-            ("Shift+C", "自定义番茄钟时长 (工作/休息)"),
-            ("Ctrl+p", "弹出语法说明指南"),
-            ("F1/?", "关闭/展开快捷键面板"),
-            ("q", "退出 TUI 系统"),
+            .title(crate::tr!(
+                self.lang,
+                " 快捷键指南 (F1/?) ",
+                " Shortcuts (F1/?) "
+            ));
+        let keys: Vec<(&str, &str)> = vec![
+            (
+                "h/l",
+                crate::tr!(
+                    self.lang,
+                    "切换面板 (左/中/右栏)",
+                    "switch pane (left/center/right)"
+                ),
+            ),
+            (
+                "j/k",
+                crate::tr!(self.lang, "上下移动列表选项", "move up/down the list"),
+            ),
+            (
+                "1-9",
+                crate::tr!(
+                    self.lang,
+                    "切换视图 (9=标签库, 8=归档箱)",
+                    "switch view (9=tags, 8=archive)"
+                ),
+            ),
+            (
+                "⇧J/⇧K",
+                crate::tr!(
+                    self.lang,
+                    "今日 / 明日视图 (Shift+J / Shift+K)",
+                    "today / tomorrow view (Shift+J / Shift+K)"
+                ),
+            ),
+            (
+                "/",
+                crate::tr!(
+                    self.lang,
+                    "全局搜索 (标题与备注)",
+                    "global search (title & notes)"
+                ),
+            ),
+            (
+                "f",
+                crate::tr!(self.lang, "情境/标签过滤 (Context)", "context/tag filter"),
+            ),
+            (
+                "a",
+                crate::tr!(
+                    self.lang,
+                    "快速捕获任务 (Inbox)",
+                    "quick capture task (Inbox)"
+                ),
+            ),
+            (
+                "n",
+                crate::tr!(
+                    self.lang,
+                    "编辑长备注 ($EDITOR)",
+                    "edit long notes ($EDITOR)"
+                ),
+            ),
+            (
+                "e",
+                crate::tr!(self.lang, "编辑任务标题", "edit task title"),
+            ),
+            (
+                "d",
+                crate::tr!(self.lang, "修改截止时间 (due)", "edit due time"),
+            ),
+            (
+                "L",
+                crate::tr!(
+                    self.lang,
+                    "修改循环规则 (rrule)",
+                    "edit recurrence rule (rrule)"
+                ),
+            ),
+            (
+                "W",
+                crate::tr!(self.lang, "修改委派对象 (Delegated)", "edit delegated-to"),
+            ),
+            (
+                "C",
+                crate::tr!(
+                    self.lang,
+                    "新增检查单项 / SPC 勾选",
+                    "add checklist item / Space to tick"
+                ),
+            ),
+            (
+                "r",
+                crate::tr!(self.lang, "开启每周回顾 Hook", "start weekly review hook"),
+            ),
+            (
+                "Enter",
+                crate::tr!(
+                    self.lang,
+                    "理清任务 / 标记下一步",
+                    "clarify task / mark next"
+                ),
+            ),
+            (
+                "c",
+                crate::tr!(self.lang, "日历排期 (Schedule)", "calendar schedule"),
+            ),
+            (
+                "w",
+                crate::tr!(self.lang, "标记为等待中 (Waiting)", "mark as waiting"),
+            ),
+            (
+                "s",
+                crate::tr!(
+                    self.lang,
+                    "标记为将来/也许 (Someday)",
+                    "mark as someday/maybe"
+                ),
+            ),
+            (
+                "x",
+                crate::tr!(self.lang, "标记为已完成 (Done)", "mark as done"),
+            ),
+            (
+                "A/D",
+                crate::tr!(
+                    self.lang,
+                    "归档任务 (y确认/n取消)",
+                    "archive task (y confirm / n cancel)"
+                ),
+            ),
+            (
+                "u",
+                crate::tr!(self.lang, "恢复归档箱中的任务", "restore task from archive"),
+            ),
+            (
+                "P/S",
+                crate::tr!(
+                    self.lang,
+                    "开启专注(番茄钟) / 停止专注",
+                    "start pomodoro / stop focus"
+                ),
+            ),
+            (
+                "Shift+C",
+                crate::tr!(
+                    self.lang,
+                    "自定义番茄钟时长 (工作/休息)",
+                    "customize pomodoro lengths (work/break)"
+                ),
+            ),
+            (
+                "Ctrl+p",
+                crate::tr!(self.lang, "弹出语法说明指南", "toggle syntax guide"),
+            ),
+            (
+                "F5",
+                crate::tr!(
+                    self.lang,
+                    "切换主题 (深色/亮色)",
+                    "toggle theme (dark/light)"
+                ),
+            ),
+            (
+                "F6",
+                crate::tr!(
+                    self.lang,
+                    "切换界面语言 (中/英)",
+                    "toggle UI language (zh/en)"
+                ),
+            ),
+            (
+                "F1/?",
+                crate::tr!(self.lang, "关闭/展开快捷键面板", "toggle shortcut panel"),
+            ),
+            ("q", crate::tr!(self.lang, "退出 TUI 系统", "quit TUI")),
         ];
         let mut rows = vec![];
         let visible_keys = if self.help_scroll < keys.len() {
@@ -730,39 +977,72 @@ impl<'a> AppRender for App<'a> {
             .border_set(border::ROUNDED)
             .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(self.theme.accent))
-            .title(" 语法说明指南 (Ctrl+P) ");
+            .title(crate::tr!(
+                self.lang,
+                " 语法说明指南 (Ctrl+P) ",
+                " Syntax guide (Ctrl+P) "
+            ));
         let syntax = vec![
             Line::from(Span::styled(
-                "快速录入语法 (按 a 捕获)",
+                crate::tr!(
+                    self.lang,
+                    "快速录入语法 (按 a 捕获)",
+                    "Quick capture syntax (press a)"
+                ),
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("@标签", Style::default().fg(self.theme.text_success)),
-                Span::raw("    添加情境, 如 "),
+                Span::styled(
+                    crate::tr!(self.lang, "@标签", "@tag"),
+                    Style::default().fg(self.theme.text_success),
+                ),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "    添加情境, 如 ",
+                    "    add context, e.g. "
+                )),
                 Span::styled("@work", Style::default().fg(Color::LightBlue)),
-                Span::raw(" (支持 Tab 补全)"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " (支持 Tab 补全)",
+                    " (Tab to complete)"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("!优先级", Style::default().fg(self.theme.text_success)),
-                Span::raw("    设置优先级: "),
+                Span::styled(
+                    crate::tr!(self.lang, "!优先级", "!priority"),
+                    Style::default().fg(self.theme.text_success),
+                ),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "    设置优先级: ",
+                    "    set priority: "
+                )),
                 Span::styled("!a", Style::default().fg(Color::Red)),
-                Span::raw("(高) / "),
+                Span::raw(crate::tr!(self.lang, "(高) / ", "(high) / ")),
                 Span::styled("!b", Style::default().fg(Color::Yellow)),
-                Span::raw("(中) / "),
+                Span::raw(crate::tr!(self.lang, "(中) / ", "(medium) / ")),
                 Span::styled("!c", Style::default().fg(Color::Blue)),
-                Span::raw("(低)"),
+                Span::raw(crate::tr!(self.lang, "(低)", "(low)")),
             ]),
             Line::from(vec![
                 Span::raw("  "),
-                Span::styled("~时间", Style::default().fg(self.theme.text_success)),
-                Span::raw("    设置截止时间, 见下方时间语法"),
+                Span::styled(
+                    crate::tr!(self.lang, "~时间", "~time"),
+                    Style::default().fg(self.theme.text_success),
+                ),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "    设置截止时间, 见下方时间语法",
+                    "    set due time, see below"
+                )),
             ]),
             Line::from(vec![
-                Span::raw("  例: "),
+                Span::raw(crate::tr!(self.lang, "  例: ", "  examples: ")),
                 Span::styled(
                     "a买牛奶 @home ~tomorrow",
                     Style::default().fg(Color::LightBlue),
@@ -775,7 +1055,11 @@ impl<'a> AppRender for App<'a> {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "时间语法 (~ 与排期 c)",
+                crate::tr!(
+                    self.lang,
+                    "时间语法 (~ 与排期 c)",
+                    "Time syntax (~ and schedule c)"
+                ),
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -786,7 +1070,11 @@ impl<'a> AppRender for App<'a> {
                     "now / +2h +30m +1d +1w",
                     Style::default().fg(self.theme.text_success),
                 ),
-                Span::raw("    相对时间偏移"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "    相对时间偏移",
+                    "    relative offsets"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -794,12 +1082,20 @@ impl<'a> AppRender for App<'a> {
                     "today / tomorrow [HH:MM]",
                     Style::default().fg(self.theme.text_success),
                 ),
-                Span::raw("  今天/明天指定时刻"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "  今天/明天指定时刻",
+                    "  today/tomorrow at a time"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled("HH:MM", Style::default().fg(self.theme.text_success)),
-                Span::raw("                     当天指定时刻, 如 18:00"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "                     当天指定时刻, 如 18:00",
+                    "                     same-day time, e.g. 18:00"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -807,29 +1103,49 @@ impl<'a> AppRender for App<'a> {
                     "YYYY-MM-DD [HH:MM]",
                     Style::default().fg(self.theme.text_success),
                 ),
-                Span::raw("        绝对日期与时间"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "        绝对日期与时间",
+                    "        absolute date & time"
+                )),
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "周期 / 循环任务 (Habit / RRULE)",
+                crate::tr!(
+                    self.lang,
+                    "周期 / 循环任务 (Habit / RRULE)",
+                    "Recurring / habit tasks (RRULE)"
+                ),
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
-                Span::raw("  先按 "),
+                Span::raw(crate::tr!(self.lang, "  先按 ", "  press ")),
                 Span::styled(
                     "c",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务",
+                    " to schedule a date, then add RRULE in 'time;rule'"
+                )),
             ]),
             Line::from(vec![
-                Span::raw("  快速录入简写: "),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "  快速录入简写: ",
+                    "  quick shorthand: "
+                )),
                 Span::styled("*2w[1,3]", Style::default().fg(Color::LightBlue)),
-                Span::raw(" = 每2周周一、周三  (星期用 1-7, 0=周日; 也可写 *mo,we)"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " = 每2周周一、周三  (星期用 1-7, 0=周日; 也可写 *mo,we)",
+                    " = every 2 weeks Mon,Wed  (days 1-7, 0=Sun; or *mo,we)"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -837,17 +1153,25 @@ impl<'a> AppRender for App<'a> {
                     "FREQ=DAILY|WEEKLY|MONTHLY",
                     Style::default().fg(self.theme.text_success),
                 ),
-                Span::raw("   循环频率"),
+                Span::raw(crate::tr!(self.lang, "   循环频率", "   frequency")),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled("INTERVAL=2", Style::default().fg(self.theme.text_success)),
-                Span::raw("                  循环间隔 (如每 2 周)"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "                  循环间隔 (如每 2 周)",
+                    "                  interval (e.g. every 2 weeks)"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
                 Span::styled("BYDAY=SA,SU", Style::default().fg(self.theme.text_success)),
-                Span::raw("                 指定周几 (MO TU WE TH FR SA SU)"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "                 指定周几 (MO TU WE TH FR SA SU)",
+                    "                 days of week (MO TU WE TH FR SA SU)"
+                )),
             ]),
             Line::from(vec![
                 Span::raw("  "),
@@ -855,10 +1179,10 @@ impl<'a> AppRender for App<'a> {
                     "COUNT=10 / UNTIL=YYYY-MM-DD",
                     Style::default().fg(self.theme.text_success),
                 ),
-                Span::raw(" 终止条件"),
+                Span::raw(crate::tr!(self.lang, " 终止条件", " end conditions")),
             ]),
             Line::from(vec![
-                Span::raw("  例: "),
+                Span::raw(crate::tr!(self.lang, "  例: ", "  examples: ")),
                 Span::styled(
                     ";FREQ=WEEKLY;BYDAY=SA,SU",
                     Style::default().fg(Color::LightBlue),
@@ -871,65 +1195,81 @@ impl<'a> AppRender for App<'a> {
             ]),
             Line::from(""),
             Line::from(Span::styled(
-                "其他操作说明",
+                crate::tr!(self.lang, "其他操作说明", "Other tips"),
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
-                Span::raw("  等待 "),
+                Span::raw(crate::tr!(self.lang, "  等待 ", "  waiting ")),
                 Span::styled(
                     "w",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 后可填写 [谁/何时], 如 "),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " 后可填写 [谁/何时], 如 ",
+                    " then set [who/when], e.g. "
+                )),
                 Span::styled("w → Alice → +1d", Style::default().fg(Color::LightBlue)),
             ]),
             Line::from(vec![
-                Span::raw("  子任务 "),
+                Span::raw(crate::tr!(self.lang, "  子任务 ", "  subtasks ")),
                 Span::styled(
                     "C",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 新增, "),
+                Span::raw(crate::tr!(self.lang, " 新增, ", " add, ")),
                 Span::styled(
                     "Space",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 依次打卡, 全部完成自动重置"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " 依次打卡, 全部完成自动重置",
+                    " to tick; auto-resets when all done"
+                )),
             ]),
             Line::from(vec![
-                Span::raw("  标签库 (视图9): 按 "),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    "  标签库 (视图9): 按 ",
+                    "  Tags (view 9): press "
+                )),
                 Span::styled(
                     "a",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 动态新增, 按 "),
+                Span::raw(crate::tr!(self.lang, " 动态新增, 按 ", " to add, ")),
                 Span::styled(
                     "D",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 删除"),
+                Span::raw(crate::tr!(self.lang, " 删除", " to delete")),
             ]),
             Line::from(vec![
-                Span::raw("  按 "),
+                Span::raw(crate::tr!(self.lang, "  按 ", "  press ")),
                 Span::styled(
                     "Ctrl+P",
                     Style::default()
                         .fg(Color::Cyan)
                         .add_modifier(Modifier::BOLD),
                 ),
-                Span::raw(" 弹出/关闭本语法说明指南"),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " 弹出/关闭本语法说明指南",
+                    " to toggle this guide"
+                )),
             ]),
         ];
         let para = Paragraph::new(syntax)
@@ -963,7 +1303,7 @@ impl<'a> AppRender for App<'a> {
 
         if self.total_count() == 0 {
             lines.push(Line::from(Span::styled(
-                " 欢迎使用 gtp",
+                crate::tr!(self.lang, " 欢迎使用 gtp", "  Welcome to gtp"),
                 Style::default()
                     .fg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
@@ -985,18 +1325,18 @@ impl<'a> AppRender for App<'a> {
                 let cnt = self.context_count(*v);
                 let active = cur == *v;
                 let (icon, label) = match v {
-                    View::Inbox => ("", "收件箱"),
-                    View::Today => ("", "今日"),
-                    View::Tomorrow => ("", "明日"),
-                    View::Next => ("", "下一步"),
-                    View::Waiting => ("", "等待中"),
-                    View::Scheduled => ("", "已排程"),
-                    View::Someday => ("", "将来/也许"),
-                    View::Reference => ("", "参考资料"),
-                    View::Done => ("", "已完成"),
-                    View::Review => ("", "周回顾"),
-                    View::Archived => ("", "归档箱"),
-                    View::Tags => ("", "标签库"),
+                    View::Inbox => ("", super::view_label(self.lang, View::Inbox)),
+                    View::Today => ("", super::view_label(self.lang, View::Today)),
+                    View::Tomorrow => ("", super::view_label(self.lang, View::Tomorrow)),
+                    View::Next => ("", super::view_label(self.lang, View::Next)),
+                    View::Waiting => ("", super::view_label(self.lang, View::Waiting)),
+                    View::Scheduled => ("", super::view_label(self.lang, View::Scheduled)),
+                    View::Someday => ("", super::view_label(self.lang, View::Someday)),
+                    View::Reference => ("", super::view_label(self.lang, View::Reference)),
+                    View::Done => ("", super::view_label(self.lang, View::Done)),
+                    View::Review => ("", super::view_label(self.lang, View::Review)),
+                    View::Archived => ("", super::view_label(self.lang, View::Archived)),
+                    View::Tags => ("", super::view_label(self.lang, View::Tags)),
                 };
                 let padded_label = pad_right(label, 10);
 
@@ -1049,9 +1389,9 @@ impl<'a> AppRender for App<'a> {
         ] {
             let active = cur == *v;
             let (icon, label) = match v {
-                View::Review => ("", "周回顾"),
-                View::Archived => ("", "归档箱"),
-                View::Tags => ("", "标签库"),
+                View::Review => ("", super::view_label(self.lang, View::Review)),
+                View::Archived => ("", super::view_label(self.lang, View::Archived)),
+                View::Tags => ("", super::view_label(self.lang, View::Tags)),
                 _ => ("", ""),
             };
             let padded_label = pad_right(label, 10);
@@ -1086,7 +1426,7 @@ impl<'a> AppRender for App<'a> {
                 .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(Span::styled(
-            format!("  {}", next_hint(self.view)),
+            format!("  {}", next_hint(self.lang, self.view)),
             Style::default().fg(Color::Gray),
         )));
 
@@ -1102,7 +1442,7 @@ impl<'a> AppRender for App<'a> {
                     .border_set(border::ROUNDED)
                     .padding(ratatui::widgets::Padding::horizontal(1))
                     .border_style(Style::default().fg(border_color))
-                    .title(" Guide "),
+                    .title(crate::tr!(self.lang, " 引导 ", " Guide ")),
             ),
             area,
         );
@@ -1115,9 +1455,11 @@ impl<'a> AppRender for App<'a> {
             self.theme.text_dim
         };
         let items = build_list_items(self);
-        let title = format!(
+        let title = crate::tr!(
+            self.lang,
+            " 任务 · {}{} ",
             " Tasks · {}{} ",
-            self.view.label(),
+            super::view_label(self.lang, self.view),
             if let Some(ref tf) = self.tag_filter {
                 format!(" [@{}]", tf)
             } else {
@@ -1156,18 +1498,22 @@ impl<'a> AppRender for App<'a> {
             .border_set(border::ROUNDED)
             .padding(ratatui::widgets::Padding::horizontal(1))
             .border_style(Style::default().fg(border_color))
-            .title(" 任务详情 ");
+            .title(crate::tr!(self.lang, " 任务详情 ", " Task Details "));
 
         match &self.detail {
             None => {
-                let empty_para = Paragraph::new("\n\n󰋔\n\n未选中任务")
-                    .alignment(Alignment::Center)
-                    .style(
-                        Style::default()
-                            .fg(self.theme.text_dim)
-                            .add_modifier(Modifier::ITALIC),
-                    )
-                    .block(block);
+                let empty_para = Paragraph::new(crate::tr!(
+                    self.lang,
+                    "\n\n󰋔\n\n未选中任务",
+                    "\n\n󰋔\n\nNo task selected"
+                ))
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(self.theme.text_dim)
+                        .add_modifier(Modifier::ITALIC),
+                )
+                .block(block);
                 f.render_widget(empty_para, area);
             }
             Some(d) => {
@@ -1176,7 +1522,7 @@ impl<'a> AppRender for App<'a> {
                 // 标题
                 lines.push(Line::from(vec![
                     Span::styled(
-                        "标题: ",
+                        crate::tr!(self.lang, "标题: ", "Title: "),
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
@@ -1190,12 +1536,15 @@ impl<'a> AppRender for App<'a> {
                 // 状态 / 归档（归档任务只展示原因与时间，不再显示已完成/逾期）
                 if let Some(reason) = &d.task.archive_reason {
                     let reason_cn = match reason.as_str() {
-                        "completed" => "[完成]",
-                        "deleted" => "[删除]",
-                        _ => "[归档]",
+                        "completed" => crate::tr!(self.lang, "[完成]", "[Done]"),
+                        "deleted" => crate::tr!(self.lang, "[删除]", "[Deleted]"),
+                        _ => crate::tr!(self.lang, "[归档]", "[Archived]"),
                     };
                     lines.push(Line::from(vec![
-                        Span::styled("归档: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            crate::tr!(self.lang, "归档: ", "Archived: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
                         Span::styled(
                             format!("{} {}", reason_cn, time::format_local(d.task.archived_at)),
                             Style::default().fg(self.theme.text_dim),
@@ -1204,9 +1553,12 @@ impl<'a> AppRender for App<'a> {
                 } else {
                     let st_color = ui::status_color(&d.task.status);
                     lines.push(Line::from(vec![
-                        Span::styled("状态: ", Style::default().fg(self.theme.text_dim)),
                         Span::styled(
-                            status_cn(d.task.status),
+                            crate::tr!(self.lang, "状态: ", "Status: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
+                        Span::styled(
+                            status_cn(self.lang, d.task.status),
                             Style::default().fg(st_color).add_modifier(Modifier::BOLD),
                         ),
                     ]));
@@ -1214,14 +1566,20 @@ impl<'a> AppRender for App<'a> {
 
                 // 截止时间
                 lines.push(Line::from(vec![
-                    Span::styled("截止: ", Style::default().fg(self.theme.text_dim)),
+                    Span::styled(
+                        crate::tr!(self.lang, "截止: ", "Due: "),
+                        Style::default().fg(self.theme.text_dim),
+                    ),
                     Span::raw(time::format_local(d.task.due_at)),
                 ]));
 
                 // 计划时间
                 if d.task.scheduled_start_at.is_some() || d.task.scheduled_end_at.is_some() {
                     lines.push(Line::from(vec![
-                        Span::styled("计划: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            crate::tr!(self.lang, "计划: ", "Planned: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
                         Span::raw(format!(
                             "{} -> {}",
                             time::format_local(d.task.scheduled_start_at),
@@ -1232,23 +1590,29 @@ impl<'a> AppRender for App<'a> {
 
                 // 循环规则
                 if let Some(rr) = &d.task.rrule {
-                    let cn_rr = rr
-                        .replace("FREQ=DAILY", "每天")
-                        .replace("FREQ=WEEKLY", "每周")
-                        .replace("FREQ=MONTHLY", "每月")
-                        .replace("INTERVAL=", "间隔=")
-                        .replace("COUNT=", "次数=")
-                        .replace("UNTIL=", "直到=");
+                    let shown_rr = if self.lang.is_zh() {
+                        rr.replace("FREQ=DAILY", "每天")
+                            .replace("FREQ=WEEKLY", "每周")
+                            .replace("FREQ=MONTHLY", "每月")
+                            .replace("INTERVAL=", "间隔=")
+                            .replace("COUNT=", "次数=")
+                            .replace("UNTIL=", "直到=")
+                    } else {
+                        rr.clone()
+                    };
                     lines.push(Line::from(vec![
-                        Span::styled("循环: ", Style::default().fg(self.theme.text_dim)),
-                        Span::raw(cn_rr),
+                        Span::styled(
+                            crate::tr!(self.lang, "循环: ", "Rrule: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
+                        Span::raw(shown_rr),
                     ]));
                 }
 
                 // 标签
                 if !d.tags.is_empty() {
                     let mut tag_spans = vec![Span::styled(
-                        "标签: ",
+                        crate::tr!(self.lang, "标签: ", "Tags: "),
                         Style::default().fg(self.theme.text_dim),
                     )];
                     for (i, tg) in d.tags.iter().enumerate() {
@@ -1267,7 +1631,10 @@ impl<'a> AppRender for App<'a> {
                 // 委派
                 if let Some(del) = &d.task.delegated_to {
                     lines.push(Line::from(vec![
-                        Span::styled("委派: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            crate::tr!(self.lang, "委派: ", "Delegated: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
                         Span::raw(del.clone()),
                     ]));
                 }
@@ -1275,7 +1642,7 @@ impl<'a> AppRender for App<'a> {
                 // 检查单
                 if !d.task.checklist.is_empty() {
                     lines.push(Line::from(Span::styled(
-                        "检查单:",
+                        crate::tr!(self.lang, "检查单:", "Checklist:"),
                         Style::default().fg(self.theme.text_dim),
                     )));
                     for item in &d.task.checklist {
@@ -1301,7 +1668,10 @@ impl<'a> AppRender for App<'a> {
                 if pomo_count > 0 {
                     let tomatoes = " ".repeat(pomo_count);
                     lines.push(Line::from(vec![
-                        Span::styled("专注: ", Style::default().fg(self.theme.text_dim)),
+                        Span::styled(
+                            crate::tr!(self.lang, "专注: ", "Focus: "),
+                            Style::default().fg(self.theme.text_dim),
+                        ),
                         Span::styled(
                             format!("{} ({})", tomatoes, pomo_count),
                             Style::default().fg(self.theme.text_urgent),
@@ -1317,12 +1687,12 @@ impl<'a> AppRender for App<'a> {
                 // 备注
                 if d.task.notes.trim().is_empty() {
                     lines.push(Line::from(Span::styled(
-                        "备注: -",
+                        crate::tr!(self.lang, "备注: -", "Notes: -"),
                         Style::default().fg(self.theme.text_dim),
                     )));
                 } else {
                     lines.push(Line::from(Span::styled(
-                        "备注:",
+                        crate::tr!(self.lang, "备注:", "Notes:"),
                         Style::default().add_modifier(Modifier::BOLD),
                     )));
                     for ln in d.task.notes.split('\n') {
@@ -1332,18 +1702,18 @@ impl<'a> AppRender for App<'a> {
 
                 lines.push(Line::from(""));
                 lines.push(Line::from(Span::styled(
-                    "时间线",
+                    crate::tr!(self.lang, "时间线", "Timeline"),
                     Style::default().add_modifier(Modifier::UNDERLINED),
                 )));
                 for e in d.events.iter().rev().take(6).rev() {
                     let event_cn = match e.event_type.as_str() {
-                        "created" => "创建",
-                        "status_change" => "流转",
-                        event::EV_COMPLETED => "完成",
-                        event::EV_ARCHIVED => "归档",
-                        event::EV_POMODORO => "专注",
-                        event::EV_HABIT_COMPLETED => "习惯",
-                        event::EV_RESTORED => "恢复",
+                        "created" => crate::tr!(self.lang, "创建", "created"),
+                        "status_change" => crate::tr!(self.lang, "流转", "changed"),
+                        event::EV_COMPLETED => crate::tr!(self.lang, "完成", "completed"),
+                        event::EV_ARCHIVED => crate::tr!(self.lang, "归档", "archived"),
+                        event::EV_POMODORO => crate::tr!(self.lang, "专注", "focus"),
+                        event::EV_HABIT_COMPLETED => crate::tr!(self.lang, "习惯", "habit"),
+                        event::EV_RESTORED => crate::tr!(self.lang, "恢复", "restored"),
                         _ => &e.event_type,
                     };
 
@@ -1352,14 +1722,14 @@ impl<'a> AppRender for App<'a> {
                         .as_deref()
                         .unwrap_or("-")
                         .parse::<crate::model::task::Status>()
-                        .map(status_cn)
+                        .map(|s| status_cn(self.lang, s))
                         .unwrap_or("-");
                     let to_cn = e
                         .to_status
                         .as_deref()
                         .unwrap_or("-")
                         .parse::<crate::model::task::Status>()
-                        .map(status_cn)
+                        .map(|s| status_cn(self.lang, s))
                         .unwrap_or("-");
 
                     let action = if e.event_type == "status_change" {

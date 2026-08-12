@@ -33,5 +33,11 @@ pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
         conn.pragma_update(None, "user_version", 4)?;
     }
 
+    if current_version < 5 {
+        let sql6 = include_str!("../../migrations/0006_settings.sql");
+        conn.execute_batch(sql6)?;
+        conn.pragma_update(None, "user_version", 5)?;
+    }
+
     Ok(())
 }

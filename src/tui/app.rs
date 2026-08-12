@@ -52,23 +52,6 @@ pub(crate) enum View {
 }
 
 impl View {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            View::Inbox => "Inbox",
-            View::Today => "Today",
-            View::Tomorrow => "Tomorrow",
-            View::Next => "Next",
-            View::Waiting => "Waiting",
-            View::Scheduled => "Scheduled",
-            View::Someday => "Someday",
-            View::Reference => "Reference",
-            View::Done => "Done",
-            View::Review => "Review",
-            View::Archived => "Archived",
-            View::Tags => "Tags",
-        }
-    }
-
     /// 状态视图对应的状态字符串（用于查询与中文展示）。
     pub(crate) fn status(self) -> Option<&'static str> {
         match self {
@@ -184,6 +167,7 @@ pub(crate) struct App<'a> {
     pub(crate) pane: Pane,
     pub(crate) input: String,
     pub(crate) status_message: String,
+    pub(crate) lang: crate::i18n::Lang,
     pub(crate) show_help: bool,
     pub(crate) show_syntax: bool,
     pub(crate) help_scroll: usize,
@@ -211,6 +195,23 @@ pub(crate) struct App<'a> {
 
 impl<'a> App<'a> {
     pub(crate) fn new(conn: &'a Connection) -> Result<Self> {
+        // 从 settings 表恢复语言与主题。
+        let lang = match crate::repo::settings::get(conn, "lang")
+            .ok()
+            .flatten()
+            .as_deref()
+        {
+            Some("en") => crate::i18n::Lang::En,
+            _ => crate::i18n::Lang::Zh,
+        };
+        let theme = match crate::repo::settings::get(conn, "theme")
+            .ok()
+            .flatten()
+            .as_deref()
+        {
+            Some("latte") => crate::tui::theme::Theme::catppuccin_latte(),
+            _ => crate::tui::theme::Theme::catppuccin_mocha(),
+        };
         let mut app = App {
             conn,
             view: View::Inbox,
@@ -221,7 +222,9 @@ impl<'a> App<'a> {
             mode: Mode::Normal,
             pane: Pane::Left,
             input: String::new(),
-            status_message: "Press '?' or 'F1' for help".to_string(),
+            status_message: crate::tr!(lang, "按 '?' 或 F1 查看帮助", "Press '?' or F1 for help")
+                .to_string(),
+            lang,
             show_help: false,
             show_syntax: false,
             help_scroll: 0,
@@ -237,7 +240,7 @@ impl<'a> App<'a> {
             needs_clear: false,
             pending_archive_ids: Vec::new(),
             hide_pomo_banner: false,
-            theme: crate::tui::theme::Theme::default(),
+            theme,
             popup: None,
             last_tick_ms: 0,
             notified_events: std::collections::HashSet::new(),
@@ -665,11 +668,16 @@ impl<'a> App<'a> {
 
     pub(crate) fn act_next(&mut self, row: Row) -> Result<()> {
         let t = tasks::transition(self.conn, &row.id, task::Status::Next)?;
-        self.status_message = format!("{} -> next", &t.id[..8]);
+        self.status_message = crate::tr!(self.lang, "{} -> 下一步", "{} -> next", &t.id[..8]);
         if Self::needs_time(&t) {
             self.set_mode(Mode::PlanningTime);
             self.input.clear();
-            self.status_message = format!("{} 预计开始/截止? (空/Esc 跳过)", &t.id[..8]);
+            self.status_message = crate::tr!(
+                self.lang,
+                "{} 预计开始/截止? (空/Esc 跳过)",
+                "{} start/due? (empty/Esc to skip)",
+                &t.id[..8]
+            );
         } else {
             self.refresh()?;
             self.load_detail();
@@ -693,7 +701,12 @@ impl<'a> App<'a> {
             let id = &ids[0];
             if let Ok(task) = tasks::get(self.conn, id) {
                 if task.status == to {
-                    self.status_message = format!("already {}", to);
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "已是 {} 状态",
+                        "already {}",
+                        crate::tui::status_cn(self.lang, task.status)
+                    );
                     return Ok(());
                 }
                 if to == task::Status::Next {
@@ -712,7 +725,11 @@ impl<'a> App<'a> {
                     }
                 }
                 let t = tasks::transition(self.conn, id, to)?;
-                self.status_message = format!("{} -> {}", &t.id[..8], t.status);
+                self.status_message = format!(
+                    "{} -> {}",
+                    &t.id[..8],
+                    crate::tui::status_cn(self.lang, t.status)
+                );
             }
         } else {
             let mut count = 0;
@@ -735,7 +752,8 @@ impl<'a> App<'a> {
                     }
                 }
             }
-            self.status_message = format!("Bulk {} {} items", to, count);
+            self.status_message =
+                crate::tr!(self.lang, "批量 {} {} 项", "Bulk {} {} items", to, count);
         }
 
         if self.mode == Mode::Visual {

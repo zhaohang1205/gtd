@@ -1,5 +1,6 @@
 pub mod alarm;
 pub mod pomodoro;
+pub mod settings;
 pub mod tags;
 pub mod tasks;
 

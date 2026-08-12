@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod db;
 mod error;
+mod i18n;
 mod model;
 mod parser;
 mod repo;

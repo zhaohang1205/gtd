@@ -18,12 +18,12 @@ GTD terminal task manager (`gtp`) — a Rust binary (edition 2021, **no lib targ
 - `db/` — `conn.rs::open` resolves `~/.config/gtp/gtp.db` via `dirs::config_dir()`, then runs migrations keyed off SQLite `user_version`.
 - `time.rs` — `parse_time` (human input: `now`, `+2h`, `today`, `2026-07-24 14:30` → UTC ms), self-contained `rrule_occurrences` (no external crate), `format_local`.
 - `parser.rs` — `parse_quick_add`: splits input into `@tag` words and `~time` words.
-- `tui/` — `app.rs`, `handlers.rs` (key handling), `render.rs`, `ui.rs`, `calendar.rs`, `theme.rs` (Catppuccin). **UI strings are Chinese** — match that when editing UI text.
+- `tui/` — `app.rs`, `handlers.rs` (key handling), `render.rs`, `ui.rs`, `calendar.rs`, `theme.rs` (Catppuccin), `i18n.rs`. **UI strings are Chinese by default and localized via `crate::tr!` / `Lang` (F6 toggles to English, F5 toggles theme); never hardcode UI text.**
 
 ## Non-obvious rules (violating these breaks things)
 
 - **Timestamps**: store UTC ms INTEGER, never formatted strings. All time math goes through `time.rs`; display via `format_local`.
-- **Migrations**: never edit existing `migrations/*.sql`. Add a new file plus a new version block in `migrate.rs` (currently v1 = 0001+0002, v2 = +0003, v3 = +0004, v4 = +0005). Migration SQL is idempotent (IF NOT EXISTS / INSERT OR IGNORE).
+- **Migrations**: never edit existing `migrations/*.sql`. Add a new file plus a new version block in `migrate.rs` (currently v1 = 0001+0002, v2 = +0003, v3 = +0004, v4 = +0005, v5 = +0006). Migration SQL is idempotent (IF NOT EXISTS / INSERT OR IGNORE).
 - **New event types**: add a const in `model/event.rs` AND keep the `task_events` comment in `migrations/0001_init.sql` in sync.
 - **DB paths**: `~/.config/gtp/gtp.db` and `~/.config/gtp/pomo.json` both derive from `dirs::config_dir()` — never hardcode.
 - **ID resolution**: commands accept a task id, a unique id-prefix, or an exact title (`resolve_project`).

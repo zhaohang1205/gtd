@@ -23,34 +23,72 @@ use rusqlite::Connection;
 use std::io::{self, Stdout};
 use std::time::Duration;
 
-/// 状态的中文含义，用于引导栏的“状态地图”。
-pub(crate) fn status_cn(s: task::Status) -> &'static str {
+/// 状态的中文含义，用于引导栏的“状态地图”。按当前语言返回。
+pub(crate) fn status_cn(lang: crate::i18n::Lang, s: task::Status) -> &'static str {
     match s {
-        task::Status::Inbox => "收件箱",
-        task::Status::Next => "下一步",
-        task::Status::Waiting => "等待中",
-        task::Status::Scheduled => "已排程",
-        task::Status::Someday => "将来/也许",
-        task::Status::Reference => "参考资料",
-        task::Status::Done => "已完成",
+        task::Status::Inbox => crate::tr!(lang, "收件箱", "Inbox"),
+        task::Status::Next => crate::tr!(lang, "下一步", "Next"),
+        task::Status::Waiting => crate::tr!(lang, "等待中", "Waiting"),
+        task::Status::Scheduled => crate::tr!(lang, "已排程", "Scheduled"),
+        task::Status::Someday => crate::tr!(lang, "将来/也许", "Someday"),
+        task::Status::Reference => crate::tr!(lang, "参考资料", "Reference"),
+        task::Status::Done => crate::tr!(lang, "已完成", "Done"),
+    }
+}
+
+/// 引导栏里各视图的中文/英文名（含日视图与归档箱等无状态视图）。
+pub(crate) fn view_label(lang: crate::i18n::Lang, v: View) -> &'static str {
+    match v {
+        View::Inbox => crate::tr!(lang, "收件箱", "Inbox"),
+        View::Today => crate::tr!(lang, "今日", "Today"),
+        View::Tomorrow => crate::tr!(lang, "明日", "Tomorrow"),
+        View::Next => crate::tr!(lang, "下一步", "Next"),
+        View::Waiting => crate::tr!(lang, "等待中", "Waiting"),
+        View::Scheduled => crate::tr!(lang, "已排程", "Scheduled"),
+        View::Someday => crate::tr!(lang, "将来/也许", "Someday"),
+        View::Reference => crate::tr!(lang, "参考资料", "Reference"),
+        View::Done => crate::tr!(lang, "已完成", "Done"),
+        View::Review => crate::tr!(lang, "周回顾", "Review"),
+        View::Archived => crate::tr!(lang, "归档箱", "Archived"),
+        View::Tags => crate::tr!(lang, "标签库", "Tags"),
     }
 }
 
 /// 根据当前视图，给出“下一步该做什么”的提示。
-pub(crate) fn next_hint(v: View) -> &'static str {
+pub(crate) fn next_hint(lang: crate::i18n::Lang, v: View) -> &'static str {
     match v {
-        View::Inbox => "按 Enter 理清，决定它的去向",
-        View::Today => "今日到期/逾期任务，逐条动手完成",
-        View::Tomorrow => "明日任务与需结转的未完成任务",
-        View::Next => "选一条开始行动（做）",
-        View::Waiting => "跟进被阻塞的事项",
-        View::Scheduled => "按排程时间执行",
-        View::Someday => "定期回顾是否激活",
-        View::Reference => "需要时检索查阅",
-        View::Done => "可归档已完成事项",
-        View::Review => "清空各类积压",
-        View::Archived => "选中后按 u 恢复任务",
-        View::Tags => "按 a 新增标签，按 D 删除自定义标签，按 f 过滤",
+        View::Inbox => crate::tr!(
+            lang,
+            "按 Enter 理清，决定它的去向",
+            "Enter to clarify and decide its fate"
+        ),
+        View::Today => crate::tr!(
+            lang,
+            "今日到期/逾期任务，逐条动手完成",
+            "Due/overdue today — knock them out one by one"
+        ),
+        View::Tomorrow => crate::tr!(
+            lang,
+            "明日任务与需结转的未完成任务",
+            "Tomorrow's tasks plus overdue carry-overs"
+        ),
+        View::Next => crate::tr!(lang, "选一条开始行动（做）", "Pick one and get moving"),
+        View::Waiting => crate::tr!(lang, "跟进被阻塞的事项", "Follow up on blocked items"),
+        View::Scheduled => crate::tr!(lang, "按排程时间执行", "Execute on schedule"),
+        View::Someday => crate::tr!(
+            lang,
+            "定期回顾是否激活",
+            "Review periodically whether to activate"
+        ),
+        View::Reference => crate::tr!(lang, "需要时检索查阅", "Look up when needed"),
+        View::Done => crate::tr!(lang, "可归档已完成事项", "Archive completed items"),
+        View::Review => crate::tr!(lang, "清空各类积压", "Clear the backlogs"),
+        View::Archived => crate::tr!(lang, "选中后按 u 恢复任务", "Press u to restore a task"),
+        View::Tags => crate::tr!(
+            lang,
+            "按 a 新增标签，按 D 删除自定义标签，按 f 过滤",
+            "a: add tag, D: delete custom tag, f: filter"
+        ),
     }
 }
 
@@ -257,7 +295,7 @@ mod tests {
         let s = norm(&frame("1-initial-inbox", &mut term, &mut app, &mut out));
         assert!(s.contains("Active"), "引导栏应显示分组");
         assert!(s.contains("收件箱"), "引导栏含中文含义");
-        assert!(s.contains("Tasks·Inbox"), "中栏列表标题");
+        assert!(s.contains("任务·收件箱"), "中栏列表标题");
         assert!(s.contains("任务详情"), "右侧详情栏");
         assert!(s.contains("Buygroceries"), "inbox 列出已灌入的任务");
         assert!(
@@ -294,12 +332,12 @@ mod tests {
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = norm(&frame("7-after-capture", &mut term, &mut app, &mut out));
         assert!(s.contains("Buymilk"), "新收集的任务出现");
-        assert!(s.contains("·Inbox"), "收集后跳到 Inbox");
+        assert!(s.contains("·收件箱"), "收集后跳到 Inbox");
 
         // 5) 回车 -> next 触发计划钩子（缺时间则询问时间）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = norm(&frame("8-plan-time", &mut term, &mut app, &mut out));
-        assert!(s.contains("Time?"), "计划钩子询问时间");
+        assert!(s.contains("预计时间"), "计划钩子询问时间");
         // 跳过时间 -> 回到正常；被计划的任务已是 next（已离开 inbox）
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         frame("9-after-plan", &mut term, &mut app, &mut out);
@@ -320,12 +358,12 @@ mod tests {
 
         // 6) 用数字键切换视图
         for (d, lbl, expect) in [
-            ('3', "11-waiting", "Waiting"),
-            ('4', "12-scheduled", "Scheduled"),
-            ('5', "13-someday", "Someday"),
-            ('6', "14-reference", "Reference"),
-            ('7', "15-done", "Done"),
-            ('1', "16-back-inbox", "Inbox"),
+            ('3', "11-waiting", "等待中"),
+            ('4', "12-scheduled", "已排程"),
+            ('5', "13-someday", "将来/也许"),
+            ('6', "14-reference", "参考资料"),
+            ('7', "15-done", "已完成"),
+            ('1', "16-back-inbox", "收件箱"),
         ] {
             app.handle_key(key(d)).unwrap();
             let s = norm(&frame(lbl, &mut term, &mut app, &mut out));
@@ -346,7 +384,7 @@ mod tests {
         }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = norm(&frame("19-capture-jump", &mut term, &mut app, &mut out));
-        assert!(s.contains("·Inbox"), "从 waiting 视图收集后跳到 Inbox");
+        assert!(s.contains("·收件箱"), "从 waiting 视图收集后跳到 Inbox");
         assert!(s.contains("Capturedfromwaiting"));
 
         // 9) 标签 + 排程流程
@@ -361,8 +399,25 @@ mod tests {
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         app.handle_key(kc(KeyCode::Enter)).unwrap();
+        let sched_id = tasks::list(
+            &conn,
+            &ListFilter {
+                status: None,
+                tags: vec!["urgent".to_string()],
+                query: None,
+                review_stale: false,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .next()
+        .map(|t| t.id)
+        .expect("urgent 任务已打标签");
         let s = norm(&frame("21-after-schedule", &mut term, &mut app, &mut out));
-        assert!(s.contains("sched"), "显示排程时间");
+        assert!(
+            s.contains(&format!("已排程{}", &sched_id[..8])),
+            "显示排程状态消息"
+        );
 
         // 10) 归档(需确认) + 帮助切换 + 退出
         app.handle_key(key('4')).unwrap();
@@ -556,45 +611,46 @@ mod tests {
         let now = crate::time::now_ms();
         let h = 3600 * 1000i64;
         let d = 24 * 3600 * 1000i64;
+        let zh = crate::i18n::Lang::Zh;
 
         // 未来
         assert_eq!(
-            crate::time::relative_due(Some(now + 5 * h)).as_deref(),
+            crate::time::relative_due(zh, Some(now + 5 * h)).as_deref(),
             Some("5小时后")
         );
         assert_eq!(
-            crate::time::relative_due(Some(now + 30 * 60 * 1000)).as_deref(),
+            crate::time::relative_due(zh, Some(now + 30 * 60 * 1000)).as_deref(),
             Some("30分钟后")
         );
         assert_eq!(
-            crate::time::relative_due(Some(now + 2 * d)).as_deref(),
+            crate::time::relative_due(zh, Some(now + 2 * d)).as_deref(),
             Some("2天后")
         );
 
         // 过去（修复前：5小时前被 rem_euclid 算成 19小时前）
         assert_eq!(
-            crate::time::relative_due(Some(now - 5 * h)).as_deref(),
+            crate::time::relative_due(zh, Some(now - 5 * h)).as_deref(),
             Some("5小时前")
         );
         assert_eq!(
-            crate::time::relative_due(Some(now - 40 * 60 * 1000)).as_deref(),
+            crate::time::relative_due(zh, Some(now - 40 * 60 * 1000)).as_deref(),
             Some("40分钟前")
         );
         assert_eq!(
-            crate::time::relative_due(Some(now - 2 * d)).as_deref(),
+            crate::time::relative_due(zh, Some(now - 2 * d)).as_deref(),
             Some("逾期2天")
         );
 
         // 完成时间展示
         assert_eq!(
-            crate::time::relative_past(Some(now - 3 * h)).as_deref(),
+            crate::time::relative_past(zh, Some(now - 3 * h)).as_deref(),
             Some("3小时前")
         );
         assert_eq!(
-            crate::time::relative_past(Some(now - 2 * d)).as_deref(),
+            crate::time::relative_past(zh, Some(now - 2 * d)).as_deref(),
             Some("2天前")
         );
-        assert_eq!(crate::time::relative_past(None), None);
+        assert_eq!(crate::time::relative_past(zh, None), None);
     }
 
     #[test]
@@ -804,5 +860,54 @@ mod tests {
             "2026-08-24 09:00",
             "下一次发生 = 2 周后的周一"
         );
+    }
+
+    #[test]
+    fn lang_and_theme_toggle_persist_to_settings() {
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        // 默认中文 + 深色主题
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        assert_eq!(app.lang, crate::i18n::Lang::Zh);
+        assert!(app.theme.is_dark, "默认 Catppuccin Mocha 深色");
+        assert_eq!(crate::repo::settings::get(&conn, "lang").unwrap(), None);
+        assert_eq!(crate::repo::settings::get(&conn, "theme").unwrap(), None);
+
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+        assert!(s.contains("收件箱"), "中文默认显示收件箱");
+
+        // F6 切英文 → 写入 settings 表，界面文案切换
+        app.handle_key(kc(KeyCode::F(6))).unwrap();
+        assert_eq!(app.lang, crate::i18n::Lang::En);
+        assert_eq!(
+            crate::repo::settings::get(&conn, "lang")
+                .unwrap()
+                .as_deref(),
+            Some("en")
+        );
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+        assert!(s.contains("Inbox"), "英文侧边栏显示 Inbox");
+
+        // F5 切亮色主题 → 写入 settings 表
+        app.handle_key(kc(KeyCode::F(5))).unwrap();
+        assert!(!app.theme.is_dark, "F5 切到 Latte 亮色");
+        assert_eq!(
+            crate::repo::settings::get(&conn, "theme")
+                .unwrap()
+                .as_deref(),
+            Some("latte")
+        );
+
+        // 模拟重启：从 DB 恢复语言与主题
+        drop(app);
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        assert_eq!(app.lang, crate::i18n::Lang::En, "重启后恢复英文");
+        assert!(!app.theme.is_dark, "重启后恢复亮色主题");
     }
 }

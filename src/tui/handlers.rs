@@ -57,20 +57,23 @@ impl<'a> AppHandlers for App<'a> {
                 if self.is_reviewing {
                     self.is_reviewing = false;
                     self.review_step = 0;
-                    self.status_message = "Weekly Review cancelled".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "周回顾已取消", "Weekly Review cancelled").into();
                     let _ = self.refresh();
                     self.load_detail();
                 } else if self.mode == Mode::Visual {
                     self.set_mode(Mode::Normal);
                     self.visual_start_idx = None;
                     self.selected_ids.clear();
-                    self.status_message = "Exited visual mode".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "已退出可视模式", "Exited visual mode").into();
                     let _ = self.refresh();
                     self.load_detail();
                 } else if self.tag_filter.is_some() || !self.search_query.is_empty() {
                     self.tag_filter = None;
                     self.search_query.clear();
-                    self.status_message = "Cleared filters".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "已清除过滤", "Cleared filters").into();
                     let _ = self.refresh();
                     self.load_detail();
                 } else {
@@ -83,7 +86,8 @@ impl<'a> AppHandlers for App<'a> {
                     self.set_mode(Mode::Normal);
                     self.visual_start_idx = None;
                     self.selected_ids.clear();
-                    self.status_message = "Exited visual mode".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "已退出可视模式", "Exited visual mode").into();
                 } else {
                     self.set_mode(Mode::Visual);
                     self.visual_start_idx = Some(self.selected);
@@ -96,10 +100,42 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
             KeyCode::F(5) => {
                 self.theme = self.theme.toggle();
+                let _ = crate::repo::settings::set(
+                    self.conn,
+                    "theme",
+                    if self.theme.is_dark { "mocha" } else { "latte" },
+                );
                 self.status_message = if self.theme.is_dark {
-                    "Theme set to Catppuccin Mocha (Dark)".to_string()
+                    crate::tr!(
+                        self.lang,
+                        "主题: Catppuccin 摩卡 (深色)",
+                        "Theme: Catppuccin Mocha (Dark)"
+                    )
+                    .to_string()
                 } else {
-                    "Theme set to Catppuccin Latte (Light)".to_string()
+                    crate::tr!(
+                        self.lang,
+                        "主题: Catppuccin 拿铁 (亮色)",
+                        "Theme: Catppuccin Latte (Light)"
+                    )
+                    .to_string()
+                };
+            }
+            KeyCode::F(6) => {
+                self.lang = match self.lang {
+                    crate::i18n::Lang::Zh => crate::i18n::Lang::En,
+                    crate::i18n::Lang::En => crate::i18n::Lang::Zh,
+                };
+                let key = match self.lang {
+                    crate::i18n::Lang::Zh => "zh",
+                    crate::i18n::Lang::En => "en",
+                };
+                let _ = crate::repo::settings::set(self.conn, "lang", key);
+                self.status_message = match self.lang {
+                    crate::i18n::Lang::Zh => "语言已切换为中文 (F6 切换)".to_string(),
+                    crate::i18n::Lang::En => {
+                        "Language switched to English (F6 to toggle)".to_string()
+                    }
                 };
             }
             KeyCode::Char('h') => {
@@ -144,7 +180,8 @@ impl<'a> AppHandlers for App<'a> {
                 self.is_reviewing = true;
                 self.review_step = 1;
                 self.set_view(View::Inbox);
-                self.status_message = "Weekly Review started".into();
+                self.status_message =
+                    crate::tr!(self.lang, "周回顾已开始", "Weekly Review started").into();
             }
             KeyCode::Char('R') if self.is_reviewing => {
                 self.review_step += 1;
@@ -156,7 +193,9 @@ impl<'a> AppHandlers for App<'a> {
                         self.is_reviewing = false;
                         self.review_step = 0;
                         self.set_view(View::Next);
-                        self.status_message = "Weekly Review Complete! 🎉".into();
+                        self.status_message =
+                            crate::tr!(self.lang, "每周回顾完成! 🎉", "Weekly Review Complete! 🎉")
+                                .into();
                     }
                 }
             }
@@ -272,11 +311,17 @@ impl<'a> AppHandlers for App<'a> {
                         let tag_name = row.title.trim_start_matches('@');
                         match tags::delete_tag(self.conn, tag_name) {
                             Ok(_) => {
-                                self.status_message = format!("Tag @{} deleted", tag_name);
+                                self.status_message = crate::tr!(
+                                    self.lang,
+                                    "已删除标签 @{}",
+                                    "Tag @{} deleted",
+                                    tag_name
+                                );
                                 self.refresh()?;
                             }
                             Err(e) => {
-                                self.status_message = format!("Delete failed: {}", e);
+                                self.status_message =
+                                    crate::tr!(self.lang, "删除失败: {}", "Delete failed: {}", e);
                             }
                         }
                     }
@@ -293,8 +338,10 @@ impl<'a> AppHandlers for App<'a> {
                 }
                 self.pending_archive_ids = ids;
                 self.set_mode(Mode::ConfirmArchive);
-                self.status_message = format!(
+                self.status_message = crate::tr!(
+                    self.lang,
                     "确认归档 {} 项? (y/Enter 确认, n/Esc 取消)",
+                    "Archive {} items? (y/Enter confirm, n/Esc cancel)",
                     self.pending_archive_ids.len()
                 );
             }
@@ -332,8 +379,12 @@ impl<'a> AppHandlers for App<'a> {
                                 }
                             }
                             let _ = crate::commands::pomo::start(self.conn, &tid);
-                            self.status_message =
-                                format!("🚀 零摩擦开启新一轮专注！ ({})", short_id(&tid));
+                            self.status_message = crate::tr!(
+                                self.lang,
+                                "🚀 零摩擦开启新一轮专注！ ({})",
+                                "🚀 Frictionless new focus round! ({})",
+                                short_id(&tid)
+                            );
                             self.load_detail();
                             return Ok(());
                         }
@@ -351,7 +402,8 @@ impl<'a> AppHandlers for App<'a> {
                             if !toggled_title.is_empty() {
                                 let _ =
                                     tasks::update_checklist(self.conn, &task.id, &task.checklist);
-                                self.status_message = format!("打卡: {}", toggled_title);
+                                self.status_message =
+                                    crate::tr!(self.lang, "打卡: {}", "Checked: {}", toggled_title);
                                 self.load_detail();
                             } else {
                                 // 全部已完成时，按空格则全部重置为未完成
@@ -360,7 +412,9 @@ impl<'a> AppHandlers for App<'a> {
                                 }
                                 let _ =
                                     tasks::update_checklist(self.conn, &task.id, &task.checklist);
-                                self.status_message = "重置检查单".to_string();
+                                self.status_message =
+                                    crate::tr!(self.lang, "已重置检查单", "Checklist reset")
+                                        .to_string();
                                 self.load_detail();
                             }
                         }
@@ -385,8 +439,12 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     let _ = crate::commands::pomo::start(self.conn, &tid);
-                    self.status_message =
-                        format!("🎯 Focus & Pomodoro started for {}", short_id(&tid));
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "🎯 已为 {} 开启专注与番茄钟",
+                        "🎯 Focus & Pomodoro started for {}",
+                        short_id(&tid)
+                    );
                     self.load_detail();
                 }
             }
@@ -450,7 +508,8 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     self.set_mode(Mode::Normal);
-                    self.status_message = format!("archived {} items", count);
+                    self.status_message =
+                        crate::tr!(self.lang, "已归档 {} 项", "archived {} items", count);
                     if self.mode == Mode::Visual {
                         self.selected_ids.clear();
                         self.visual_start_idx = None;
@@ -461,7 +520,8 @@ impl<'a> AppHandlers for App<'a> {
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.pending_archive_ids.clear();
                     self.set_mode(Mode::Normal);
-                    self.status_message = "归档已取消".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "归档已取消", "Archive cancelled").into();
                     self.refresh()?;
                     self.load_detail();
                 }
@@ -545,9 +605,11 @@ impl<'a> AppHandlers for App<'a> {
             Mode::Search => {
                 self.search_query = input.trim().to_string();
                 if self.search_query.is_empty() {
-                    self.status_message = "Search cleared".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "已清除搜索", "Search cleared").into();
                 } else {
-                    self.status_message = format!("Search: {}", self.search_query);
+                    self.status_message =
+                        crate::tr!(self.lang, "搜索: {}", "Search: {}", self.search_query);
                 }
                 self.refresh()?;
                 self.load_detail();
@@ -556,10 +618,12 @@ impl<'a> AppHandlers for App<'a> {
                 let t = input.trim().to_string();
                 if t.is_empty() {
                     self.tag_filter = None;
-                    self.status_message = "Tag filter cleared".into();
+                    self.status_message =
+                        crate::tr!(self.lang, "已清除标签过滤", "Tag filter cleared").into();
                 } else {
                     self.tag_filter = Some(t.clone());
-                    self.status_message = format!("Filter tag: @{}", t);
+                    self.status_message =
+                        crate::tr!(self.lang, "过滤标签: @{}", "Filter tag: @{}", t);
                 }
                 self.refresh()?;
                 self.load_detail();
@@ -569,7 +633,8 @@ impl<'a> AppHandlers for App<'a> {
                 if !title.is_empty() {
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         tasks::rename(self.conn, &row.id, title)?;
-                        self.status_message = format!("renamed {}", short_id(&row.id));
+                        self.status_message =
+                            crate::tr!(self.lang, "已重命名 {}", "renamed {}", short_id(&row.id));
                         self.refresh()?;
                         self.load_detail();
                     }
@@ -580,14 +645,27 @@ impl<'a> AppHandlers for App<'a> {
                     let inp = input.trim();
                     if inp.is_empty() {
                         tasks::set_due(self.conn, &row.id, None)?;
-                        self.status_message = format!("due cleared {}", short_id(&row.id));
+                        self.status_message = crate::tr!(
+                            self.lang,
+                            "已清除截止时间 {}",
+                            "due cleared {}",
+                            short_id(&row.id)
+                        );
                     } else {
                         match time::parse_time(inp) {
                             Ok(ms) => {
                                 tasks::set_due(self.conn, &row.id, Some(ms))?;
-                                self.status_message = format!("due set {}", short_id(&row.id));
+                                self.status_message = crate::tr!(
+                                    self.lang,
+                                    "已设截止时间 {}",
+                                    "due set {}",
+                                    short_id(&row.id)
+                                );
                             }
-                            Err(e) => self.status_message = format!("bad time: {}", e),
+                            Err(e) => {
+                                self.status_message =
+                                    crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e)
+                            }
                         }
                     }
                     self.refresh()?;
@@ -605,9 +683,19 @@ impl<'a> AppHandlers for App<'a> {
                     let set = rrule.is_some();
                     tasks::set_rrule(self.conn, &row.id, rrule)?;
                     self.status_message = if set {
-                        format!("rrule set {}", short_id(&row.id))
+                        crate::tr!(
+                            self.lang,
+                            "已设循环规则 {}",
+                            "rrule set {}",
+                            short_id(&row.id)
+                        )
                     } else {
-                        format!("rrule cleared {}", short_id(&row.id))
+                        crate::tr!(
+                            self.lang,
+                            "已清除循环规则 {}",
+                            "rrule cleared {}",
+                            short_id(&row.id)
+                        )
                     };
                     self.refresh()?;
                     self.load_detail();
@@ -624,9 +712,14 @@ impl<'a> AppHandlers for App<'a> {
                     let set = who.is_some();
                     tasks::set_delegated(self.conn, &row.id, who)?;
                     self.status_message = if set {
-                        format!("delegated {}", short_id(&row.id))
+                        crate::tr!(self.lang, "已委派 {}", "delegated {}", short_id(&row.id))
                     } else {
-                        format!("delegated cleared {}", short_id(&row.id))
+                        crate::tr!(
+                            self.lang,
+                            "已清除委派 {}",
+                            "delegated cleared {}",
+                            short_id(&row.id)
+                        )
                     };
                     self.refresh()?;
                     self.load_detail();
@@ -661,7 +754,8 @@ impl<'a> AppHandlers for App<'a> {
                         },
                     )?;
                     self.set_view(View::Inbox);
-                    self.status_message = format!("captured {}", short_id(&t.id));
+                    self.status_message =
+                        crate::tr!(self.lang, "已捕获 {}", "captured {}", short_id(&t.id));
                 }
             }
             Mode::Tagging => {
@@ -680,7 +774,13 @@ impl<'a> AppHandlers for App<'a> {
                             count += 1;
                         }
                     }
-                    self.status_message = format!("tagged {} items with +{}", count, name);
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "已为 {} 项添加标签 +{}",
+                        "tagged {} items with +{}",
+                        count,
+                        name
+                    );
                     self.selected_ids.clear();
                     self.visual_start_idx = None;
                     self.refresh()?;
@@ -737,7 +837,8 @@ impl<'a> AppHandlers for App<'a> {
                             Some(end_ms),
                             final_rrule,
                         );
-                        self.status_message = format!("scheduled {}", short_id(&row.id));
+                        self.status_message =
+                            crate::tr!(self.lang, "已排程 {}", "scheduled {}", short_id(&row.id));
                         self.refresh().unwrap_or(());
                         self.load_detail();
                     }
@@ -765,11 +866,19 @@ impl<'a> AppHandlers for App<'a> {
                         Ok(start_ms) => {
                             tasks::schedule(self.conn, &row.id, start_ms, None, None)?;
                             let t = tasks::transition(self.conn, &row.id, task::Status::Waiting)?;
-                            self.status_message = format!("{} -> waiting", short_id(&t.id));
+                            self.status_message = crate::tr!(
+                                self.lang,
+                                "{} -> 等待中",
+                                "{} -> waiting",
+                                short_id(&t.id)
+                            );
                             self.refresh()?;
                             self.load_detail();
                         }
-                        Err(e) => self.status_message = format!("bad time: {}", e),
+                        Err(e) => {
+                            self.status_message =
+                                crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e)
+                        }
                     }
                 }
             }
@@ -780,9 +889,17 @@ impl<'a> AppHandlers for App<'a> {
                         match time::parse_time(start_s) {
                             Ok(start_ms) => {
                                 tasks::set_due(self.conn, &row.id, Some(start_ms))?;
-                                self.status_message = format!("due set {}", short_id(&row.id));
+                                self.status_message = crate::tr!(
+                                    self.lang,
+                                    "已设截止时间 {}",
+                                    "due set {}",
+                                    short_id(&row.id)
+                                );
                             }
-                            Err(e) => self.status_message = format!("bad time: {}", e),
+                            Err(e) => {
+                                self.status_message =
+                                    crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e)
+                            }
                         }
                     }
                     self.set_mode(Mode::Normal);
@@ -800,7 +917,8 @@ impl<'a> AppHandlers for App<'a> {
                                 done: false,
                             });
                             let _ = tasks::update_checklist(self.conn, &task.id, &task.checklist);
-                            self.status_message = "Checklist +1".to_string();
+                            self.status_message =
+                                crate::tr!(self.lang, "检查单 +1", "Checklist +1").to_string();
                             self.load_detail();
                         }
                     }
@@ -811,7 +929,8 @@ impl<'a> AppHandlers for App<'a> {
             Mode::CreatingTag => {
                 let name = input.trim().trim_start_matches('@');
                 if !name.is_empty() && tags::find_or_create_tag(self.conn, name).is_ok() {
-                    self.status_message = format!("created tag: {}", name);
+                    self.status_message =
+                        crate::tr!(self.lang, "已创建标签: {}", "created tag: {}", name);
                     self.refresh()?;
                 }
                 self.set_mode(Mode::Normal);
@@ -831,19 +950,35 @@ impl<'a> AppHandlers for App<'a> {
                             pomo.config.short_break_mins = s;
                             pomo.config.long_break_mins = l;
                             if crate::repo::pomodoro::save_state(&pomo).is_ok() {
-                                self.status_message = format!(
+                                self.status_message = crate::tr!(
+                                    self.lang,
                                     "🍅 番茄钟配置已更新: 工作 {}m / 短休 {}m / 长休 {}m",
-                                    w, s, l
+                                    "🍅 Pomo config updated: work {}m / short {}m / long {}m",
+                                    w,
+                                    s,
+                                    l
                                 );
                             }
                         } else {
-                            self.status_message = "时长必须大于0".into();
+                            self.status_message =
+                                crate::tr!(self.lang, "时长必须大于0", "lengths must be > 0")
+                                    .into();
                         }
                     } else {
-                        self.status_message = "配置格式错误 (示例: 25;5;15)".into();
+                        self.status_message = crate::tr!(
+                            self.lang,
+                            "配置格式错误 (示例: 25;5;15)",
+                            "invalid format (e.g. 25;5;15)"
+                        )
+                        .into();
                     }
                 } else {
-                    self.status_message = "格式必须包含3项 (工作;短休;长休)".into();
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "格式必须包含3项 (工作;短休;长休)",
+                        "must have 3 parts (work;short;long)"
+                    )
+                    .into();
                 }
                 self.set_mode(Mode::Normal);
                 self.input.clear();
@@ -861,7 +996,8 @@ impl<'a> AppHandlers for App<'a> {
         }
         if let Some(row) = self.items.get(self.selected).cloned() {
             if tasks::unarchive(self.conn, &row.id).is_ok() {
-                self.status_message = format!("restored {}", short_id(&row.id));
+                self.status_message =
+                    crate::tr!(self.lang, "已恢复 {}", "restored {}", short_id(&row.id));
                 self.refresh()?;
                 self.load_detail();
             }
