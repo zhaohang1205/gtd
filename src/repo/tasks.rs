@@ -498,6 +498,66 @@ pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
     Ok(c)
 }
 
+/// Inbox 中在 `before_ms` 之前收集、至今未澄清的任务 (id, title)，
+/// 用于心智维护的收件箱滞留提醒。按收集时间升序（最旧的在前）。
+pub fn list_stale_inbox(conn: &Connection, before_ms: i64) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title FROM tasks \
+         WHERE archived_at IS NULL AND status = 'inbox' AND created_at < ?1 \
+         ORDER BY created_at ASC",
+    )?;
+    let rows = stmt.query_map([before_ms], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// Waiting 中 `before_ms` 以来未再动过的任务 (id, title)，
+/// 用于心智维护的等待老化提醒。按最后变动时间升序。
+pub fn list_stale_waiting(conn: &Connection, before_ms: i64) -> Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title FROM tasks \
+         WHERE archived_at IS NULL AND status = 'waiting' AND updated_at < ?1 \
+         ORDER BY updated_at ASC",
+    )?;
+    let rows = stmt.query_map([before_ms], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
+/// 自 `since_ms` 以来完成的任务数（含随后归档的已完成任务）。
+pub fn count_completed_since(conn: &Connection, since_ms: i64) -> Result<usize> {
+    let c: usize = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE completed_at IS NOT NULL AND completed_at >= ?1",
+        [since_ms],
+        |r| r.get(0),
+    )?;
+    Ok(c)
+}
+
+/// 今日已打卡的循环任务 id：存在 `habit_completed` 事件且时间 >= `since_ms`。
+/// 循环任务完成时不会置 `completed_at`（重新排程而非结束），故只能靠事件判断。
+pub fn checked_in_today(conn: &Connection, since_ms: i64) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT task_id FROM task_events \
+         WHERE event_type = ?1 AND at >= ?2",
+    )?;
+    let rows = stmt.query_map(
+        rusqlite::params![event::EV_HABIT_COMPLETED, since_ms],
+        |r| r.get::<_, String>(0),
+    )?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>> {
     let mut stmt = conn.prepare(
         "SELECT id,task_id,event_type,from_status,to_status,at,meta \
@@ -616,5 +676,89 @@ mod tests {
             err
         );
         assert!(get(&conn, &t.id).is_ok(), "任务仍在，未被删除");
+    }
+
+    #[test]
+    fn checked_in_today_detects_habit_completion() {
+        let (_dir, conn) = test_conn();
+        let today_start = time::local_day_bounds(0).0;
+        let day = 24 * 3600 * 1000i64;
+
+        // 循环任务：排程（带 rrule）+ Done 会推进锚点并记录 habit_completed
+        let habit = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "晨跑".into(),
+                status: task::Status::Scheduled,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        schedule(
+            &conn,
+            &habit.id,
+            time::now_ms(),
+            None,
+            Some("FREQ=DAILY".into()),
+        )
+        .unwrap();
+        assert!(
+            checked_in_today(&conn, today_start).unwrap().is_empty(),
+            "未打卡时集合为空"
+        );
+        transition(&conn, &habit.id, task::Status::Done).unwrap();
+
+        let checked = checked_in_today(&conn, today_start).unwrap();
+        assert_eq!(checked, vec![habit.id.clone()], "今日打卡后被识别");
+
+        // 非循环任务完成不会误判为打卡
+        let plain = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "一次性".into(),
+                status: task::Status::Next,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        transition(&conn, &plain.id, task::Status::Done).unwrap();
+        assert_eq!(
+            checked_in_today(&conn, today_start).unwrap(),
+            vec![habit.id.clone()],
+            "非循环任务不产生 habit_completed"
+        );
+
+        // 过去的事件不误判为今日打卡
+        conn.execute(
+            "UPDATE task_events SET at = at - ?1 WHERE event_type = ?2",
+            rusqlite::params![day, event::EV_HABIT_COMPLETED],
+        )
+        .unwrap();
+        assert!(
+            checked_in_today(&conn, today_start).unwrap().is_empty(),
+            "昨日打卡不计入今日"
+        );
+    }
+
+    #[test]
+    fn missed_recurring_slot_counts_as_overdue() {
+        let (_dir, conn) = test_conn();
+        let now = time::now_ms();
+        // 今天的 slot（09:00 已过）未打卡 → effective_due 应等于该错过 slot 而非下次
+        let anchor = now - 2 * 3600 * 1000i64;
+        let t = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "每日习惯".into(),
+                status: task::Status::Scheduled,
+                due_at: Some(anchor),
+                rrule: Some("FREQ=DAILY".into()),
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let eff = crate::commands::effective_due(&t);
+        assert_eq!(eff, Some(anchor), "错过 slot 即逾期，返回该 slot");
     }
 }

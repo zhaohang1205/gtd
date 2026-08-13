@@ -72,6 +72,8 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
             let is_done = status_enum == Status::Done;
             // 归档箱：用归档原因取代状态语义，不再显示"已完成/逾期"。
             let is_archived = r.archive_reason.is_some();
+            // 循环任务今日已打卡：✓ 标记 + 下一次执行时间。
+            let is_checked_in = r.checked_in_today;
 
             let indent = "  ".repeat(r.indent);
             let sel_prefix = if is_selected {
@@ -96,12 +98,17 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
                 time::relative_past(app.lang, r.due)
                     .map(|s| format!("~{}", s))
                     .unwrap_or_default()
+            } else if is_checked_in {
+                // 已打卡：重点展示下一次执行时间。
+                time::relative_due(app.lang, r.due)
+                    .map(|s| format!("已打卡·下次:{}", s))
+                    .unwrap_or_default()
             } else {
                 time::relative_due(app.lang, r.due)
                     .map(|s| format!("~{}", s))
                     .unwrap_or_default()
             };
-            let due_color = if is_archived || is_done {
+            let due_color = if is_archived || is_done || is_checked_in {
                 Color::DarkGray
             } else if time::is_overdue(r.due) {
                 Color::Red
@@ -115,6 +122,8 @@ pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
                     Some("deleted") => ("×", Color::DarkGray),
                     _ => ("?", Color::DarkGray),
                 }
+            } else if is_checked_in {
+                ("✓", Color::Green)
             } else {
                 (status_letter(&status_enum), status_color(&status_enum))
             };

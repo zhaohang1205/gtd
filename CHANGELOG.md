@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `README.md` is now a bilingual (中文/English) user manual.
 - Removed the stale `CODEBUDDY.md`; `AGENTS.md` is the single authoritative
   contributor guide, with test locations and CI usage corrected.
+- List-row status now follows the human's perspective for habits/scheduled
+  tasks: a recurring task checked in today is marked `✓` and shows
+  `已打卡·下次:<time>` (its next occurrence), while a missed slot is treated as
+  overdue and reported uniformly (`逾期X分钟/小时/天`). `effective_due` now
+  returns the most recent missed occurrence for recurring tasks, so the alarm
+  window, `gtp list --due-before`, and the daily digest all count a missed
+  today's slot as overdue.
 
 ### Fixed
 

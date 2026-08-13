@@ -65,8 +65,9 @@ fn days_between(from_ms: i64, to_ms: i64) -> i64 {
 
 /// Compact relative description of a due/scheduled timestamp for list rows.
 /// Returns `None` when `ms` is `None`. Examples: "逾期2天", "明天", "3天后",
-/// "5小时前", "2分钟后". Within ±24h it reports precise minutes/hours (past or
-/// future); beyond that it classifies by local calendar day.
+/// "逾期5小时", "2分钟后". Past timestamps uniformly report how overdue they are
+/// (逾期X分钟/小时/天); within ±24h it reports precise minutes/hours, beyond
+/// that it classifies by local calendar day.
 pub fn relative_due(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> {
     let ms = ms?;
     let now = now_ms();
@@ -78,26 +79,26 @@ pub fn relative_due(lang: crate::i18n::Lang, ms: Option<i64>) -> Option<String> 
         if hours.abs() < 1.0 {
             let m = (hours * 60.0).abs().round().max(1.0) as i64;
             return Some(if diff < 0 {
-                crate::tr!(lang, "{}分钟前", "{}m ago", m)
+                crate::tr!(lang, "逾期{}分钟", "{}m overdue", m)
             } else {
                 crate::tr!(lang, "{}分钟后", "in {}m", m)
             });
         }
         let h = hours.abs().round() as i64;
         return Some(if diff < 0 {
-            crate::tr!(lang, "{}小时前", "{}h ago", h)
+            crate::tr!(lang, "逾期{}小时", "{}h overdue", h)
         } else {
             crate::tr!(lang, "{}小时后", "in {}h", h)
         });
     }
 
     let d = days_between(now, ms);
-    Some(if d == 1 {
-        crate::tr!(lang, "明天", "tomorrow").to_string()
-    } else if d == -1 {
-        crate::tr!(lang, "昨天", "yesterday").to_string()
-    } else if d > 0 {
-        crate::tr!(lang, "{}天后", "in {}d", d)
+    Some(if d >= 1 {
+        if d == 1 {
+            crate::tr!(lang, "明天", "tomorrow").to_string()
+        } else {
+            crate::tr!(lang, "{}天后", "in {}d", d)
+        }
     } else {
         crate::tr!(lang, "逾期{}天", "{}d overdue", -d)
     })

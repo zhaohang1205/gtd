@@ -182,6 +182,8 @@ pub(crate) struct Row {
     pub(crate) total: Option<usize>,
     /// 归档原因（仅归档箱视图非空）：completed | deleted。
     pub(crate) archive_reason: Option<String>,
+    /// 循环任务今日是否已打卡（存在今日的 habit_completed 事件）。
+    pub(crate) checked_in_today: bool,
 }
 
 pub(crate) struct DetailData {
@@ -334,6 +336,9 @@ impl<'a> App<'a> {
         }
         self.last_tick_ms = now;
 
+        // 每日心智维护摘要（合并成一条，同一天至多一次）。
+        let _ = crate::commands::notify::check(self.conn);
+
         // 只拉取即将到期（±1h 窗口）的任务，不再全表扫描。
         if let Ok(rows) = tasks::due_in_range(self.conn, (now - 60) * 1000, (now + 3600) * 1000) {
             for (id, title, due) in rows {
@@ -450,7 +455,8 @@ impl<'a> App<'a> {
 
     /// 一次全量加载同时算出今日/明日列表：每个任务只读一次、每个循环规则只
     /// 展开一次，供今日/明日视图与侧栏徽标复用，避免重复查询与重复 RRULE 展开。
-    fn day_lists(&self) -> (DayList, DayList) {
+    /// `checked_today` 是今日已打卡的循环任务 id 集合（由 `refresh` 一次性查询）。
+    fn day_lists(&self, checked_today: &std::collections::HashSet<String>) -> (DayList, DayList) {
         let (t0s, t0e) = crate::time::local_day_bounds(0);
         let (t1s, t1e) = crate::time::local_day_bounds(1);
         let mut tags = vec![];
@@ -475,6 +481,7 @@ impl<'a> App<'a> {
 
         let mut today = Vec::new();
         let mut tomorrow = Vec::new();
+        let now = crate::time::now_ms();
         for t in tasks {
             if t.status == task::Status::Done {
                 continue;
@@ -484,6 +491,15 @@ impl<'a> App<'a> {
                 Some(rr) => anchor.and_then(|a| crate::time::rrule_occurrences(rr, a, 366).ok()),
                 None => None,
             };
+            // 今日已打卡的循环任务：保留在今日视图，展示下一次执行时间。
+            if t.rrule.is_some() && checked_today.contains(&t.id) {
+                if let Some(first) = occs
+                    .as_ref()
+                    .and_then(|o| o.iter().find(|m| **m >= now).copied())
+                {
+                    today.push((t.clone(), first));
+                }
+            }
             // 非循环任务：今日/明日命中 ⇔ 锚点时间落在该日结束之前（含逾期结转）。
             let (d0, d1) = match &occs {
                 Some(occs) => (
@@ -507,7 +523,13 @@ impl<'a> App<'a> {
 
     pub(crate) fn refresh(&mut self) -> Result<()> {
         self.items.clear();
-        let (today, tomorrow) = self.day_lists();
+        let today_start = crate::time::local_day_bounds(0).0;
+        let checked_today: std::collections::HashSet<String> =
+            tasks::checked_in_today(self.conn, today_start)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+        let (today, tomorrow) = self.day_lists(&checked_today);
         self.counts[View::Today.idx()] = today.len();
         self.counts[View::Tomorrow.idx()] = tomorrow.len();
         self.refresh_counts()?;
@@ -526,6 +548,7 @@ impl<'a> App<'a> {
                         done: None,
                         total: None,
                         archive_reason: None,
+                        checked_in_today: false,
                     });
                 }
             }
@@ -602,6 +625,7 @@ impl<'a> App<'a> {
             if let Some(d) = due {
                 row.due = Some(d);
             }
+            row.checked_in_today = checked_today.contains(&t.id);
             self.items.push(row);
         }
 
@@ -807,6 +831,10 @@ impl<'a> App<'a> {
             self.set_mode(Mode::Normal);
             self.selected_ids.clear();
             self.visual_start_idx = None;
+        }
+
+        if to == task::Status::Done {
+            let _ = crate::commands::notify::completed_feedback(self.conn);
         }
 
         self.refresh()?;

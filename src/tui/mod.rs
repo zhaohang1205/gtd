@@ -83,13 +83,16 @@ pub(crate) fn row_from_tags(t: &Task, indent: usize, tags: Vec<String>) -> Row {
         } else if t.status == task::Status::Done {
             t.completed_at.or(t.due_at).or(t.scheduled_start_at)
         } else {
-            t.due_at.or(t.scheduled_start_at)
+            // 循环任务用 effective_due：错过 slot 即显示其时间（逾期），
+            // 已打卡后锚点已推进为下次执行时间。
+            crate::commands::effective_due(t)
         },
         tags,
         indent,
         done,
         total,
         archive_reason: t.archive_reason.clone(),
+        checked_in_today: false,
     }
 }
 
@@ -576,6 +579,98 @@ mod tests {
     }
 
     #[test]
+    fn checked_in_habit_stays_in_today_with_next_time() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "daily-habit".into(),
+                status: task::Status::Scheduled,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(
+            &conn,
+            &rec.id,
+            crate::time::parse_time("today 09:00").unwrap(),
+            None,
+            Some("FREQ=DAILY".into()),
+        )
+        .unwrap();
+
+        // 今日打卡 → 锚点推进到下次 occurrence
+        tasks::transition(&conn, &rec.id, task::Status::Done).unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('J')).unwrap(); // 今日视图
+        let row = app
+            .items
+            .iter()
+            .find(|r| r.title == "daily-habit")
+            .expect("已打卡习惯仍保留在今日视图");
+        assert!(row.checked_in_today, "标记为已打卡");
+        let next = row.due.expect("有下一次执行时间");
+        assert!(next > crate::time::now_ms(), "展示的是未来的下次时间");
+
+        // Scheduled 视图同样标记已打卡
+        app.handle_key(key('4')).unwrap();
+        let row = app
+            .items
+            .iter()
+            .find(|r| r.title == "daily-habit")
+            .expect("Scheduled 视图含该习惯");
+        assert!(row.checked_in_today, "Scheduled 视图也标记已打卡");
+    }
+
+    #[test]
+    fn missed_habit_shows_overdue_in_today_view() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        // 今天的 slot 取凌晨后 1 分钟（几乎必然已过），未打卡 → 今日视图显示逾期
+        let slot = crate::time::local_day_bounds(0).0 + 60_000;
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "missed-habit".into(),
+                status: task::Status::Scheduled,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(&conn, &rec.id, slot, None, Some("FREQ=DAILY".into())).unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('J')).unwrap();
+        let row = app
+            .items
+            .iter()
+            .find(|r| r.title == "missed-habit")
+            .expect("今日视图含该习惯");
+        assert!(!row.checked_in_today, "未打卡");
+        let due = row.due.expect("有 due");
+        assert!(
+            crate::time::is_overdue(Some(due)),
+            "错过的 slot 显示为逾期: {:?}",
+            due
+        );
+
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+        assert!(s.contains("逾期"), "列表行显示逾期措辞");
+    }
+
+    #[test]
     fn relative_due_direction_and_precision() {
         let now = crate::time::now_ms();
         let h = 3600 * 1000i64;
@@ -596,18 +691,22 @@ mod tests {
             Some("2天后")
         );
 
-        // 过去（修复前：5小时前被 rem_euclid 算成 19小时前）
+        // 过去（统一逾期措辞）
         assert_eq!(
             crate::time::relative_due(zh, Some(now - 5 * h)).as_deref(),
-            Some("5小时前")
+            Some("逾期5小时")
         );
         assert_eq!(
             crate::time::relative_due(zh, Some(now - 40 * 60 * 1000)).as_deref(),
-            Some("40分钟前")
+            Some("逾期40分钟")
         );
         assert_eq!(
             crate::time::relative_due(zh, Some(now - 2 * d)).as_deref(),
             Some("逾期2天")
+        );
+        assert_eq!(
+            crate::time::relative_due(zh, Some(now - d)).as_deref(),
+            Some("逾期1天")
         );
 
         // 完成时间展示

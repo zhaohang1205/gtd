@@ -41,8 +41,8 @@ impl Theme {
             border_active: Color::Rgb(137, 180, 250), // Blue
             border_inactive: Color::Rgb(69, 71, 90),  // Surface1
 
-            hl_bg: Color::Rgb(49, 50, 68),    // Surface0
-            hl_fg: Color::Rgb(137, 180, 250), // Blue
+            hl_bg: Color::Rgb(49, 50, 68),          // Surface0
+            hl_fg: Color::Rgb(137, 180, 250),       // Blue
             row_active_bg: Color::Rgb(30, 60, 110), // 深蓝，活动行背景
 
             status_bg: Color::Rgb(24, 24, 37),    // Mantle
@@ -65,8 +65,8 @@ impl Theme {
             border_active: Color::Rgb(30, 102, 245), // Blue
             border_inactive: Color::Rgb(188, 192, 204), // Surface1
 
-            hl_bg: Color::Rgb(204, 208, 218), // Surface0
-            hl_fg: Color::Rgb(30, 102, 245),  // Blue
+            hl_bg: Color::Rgb(204, 208, 218),         // Surface0
+            hl_fg: Color::Rgb(30, 102, 245),          // Blue
             row_active_bg: Color::Rgb(204, 208, 218), // 浅色主题沿用 hl_bg
 
             status_bg: Color::Rgb(230, 233, 239), // Mantle

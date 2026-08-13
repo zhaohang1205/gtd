@@ -7,6 +7,7 @@ use anyhow::Result;
 mod alarm;
 mod capture;
 mod list;
+pub mod notify;
 pub mod pomo;
 mod review;
 mod show;
@@ -14,6 +15,13 @@ mod status;
 mod tagging;
 
 pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
+    let result = run_inner(cmd, conn);
+    // CLI hook：每次命令结束后顺带检查每日心智维护摘要（每天至多一次，已发送则直接跳过）。
+    let _ = notify::check(conn);
+    result
+}
+
+fn run_inner(cmd: Command, conn: &Connection) -> Result<()> {
     match cmd {
         Command::Capture {
             title,
@@ -92,14 +100,22 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
     }
 }
 
-/// The "effective due" of a task: for recurring tasks the next occurrence on or
-/// after now; otherwise due_at or scheduled_start_at. Used for sorting/filtering.
+/// The "effective due" of a task: for recurring tasks the slot that the human
+/// currently cares about — the most recent occurrence that has already passed
+/// without a check-in (missed ⇒ overdue), else the next occurrence on or after
+/// now. Otherwise `due_at` or `scheduled_start_at`. Used for sorting/filtering,
+/// the alarm window, and the daily digest.
 pub(crate) fn effective_due(task: &Task) -> Option<i64> {
     if let Some(rr) = &task.rrule {
         let anchor = task.scheduled_start_at.or(task.due_at);
         if let Some(start) = anchor {
             let now = crate::time::now_ms();
             if let Ok(occ) = crate::time::rrule_occurrences(rr, start, 366) {
+                // 错过即逾期：优先取最近一次已错过的 slot，让列表/提醒/摘要把它
+                // 计为逾期并显示精确的逾期时长；打卡后锚点已推进，此处自然落到下次。
+                if let Some(missed) = occ.iter().rev().find(|m| **m <= now).copied() {
+                    return Some(missed);
+                }
                 if let Some(next) = occ.into_iter().find(|m| *m >= now) {
                     return Some(next);
                 }

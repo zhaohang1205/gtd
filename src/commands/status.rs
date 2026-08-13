@@ -10,6 +10,9 @@ pub fn to_status(conn: &Connection, id: &str, to: &str) -> Result<()> {
         to.parse().map_err(|e| anyhow::anyhow!("{}", e))?;
     let t = tasks::transition(conn, &id, parsed_status)?;
     println!("{} -> {}", &t.id[..8], t.status);
+    if to == "done" {
+        let _ = crate::commands::notify::completed_feedback(conn);
+    }
     if to == "next" {
         let missing_time = t.due_at.is_none() && t.scheduled_start_at.is_none();
         if missing_time {
