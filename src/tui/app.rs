@@ -133,6 +133,8 @@ pub(crate) enum Mode {
     FilteringTag,
     /// 归档前确认：收集待归档的 id，等待 y/Enter 确认或 n/Esc 取消。
     ConfirmArchive,
+    /// 永久删除确认：等待 y/Enter 确认或 n/Esc 取消。
+    ConfirmPurge,
     /// 编辑截止时间 (due)
     EditingDue,
     /// 编辑循环规则 (rrule)
@@ -202,6 +204,7 @@ pub(crate) struct App<'a> {
     pub(crate) lang: crate::i18n::Lang,
     pub(crate) show_help: bool,
     pub(crate) show_syntax: bool,
+    pub(crate) show_shortcut_bar: bool,
     pub(crate) help_scroll: usize,
     pub(crate) should_quit: bool,
     pub(crate) calendar: calendar::CalendarState,
@@ -214,6 +217,7 @@ pub(crate) struct App<'a> {
     pub(crate) review_step: u8,
     pub(crate) needs_clear: bool,
     pub(crate) pending_archive_ids: Vec<String>,
+    pub(crate) pending_purge_ids: Vec<String>,
     pub(crate) hide_pomo_banner: bool,
     pub(crate) theme: crate::tui::theme::Theme,
     pub(crate) popup: Option<Popup>,
@@ -257,6 +261,7 @@ impl<'a> App<'a> {
             lang,
             show_help: false,
             show_syntax: false,
+            show_shortcut_bar: true,
             help_scroll: 0,
             should_quit: false,
             calendar: calendar::CalendarState::new(),
@@ -269,6 +274,7 @@ impl<'a> App<'a> {
             review_step: 0,
             needs_clear: false,
             pending_archive_ids: Vec::new(),
+            pending_purge_ids: Vec::new(),
             hide_pomo_banner: false,
             theme,
             popup: None,
@@ -683,8 +689,10 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn next_view(&mut self, delta: isize) {
-        // 今日/明日视图不参与方向键循环，只通过 Shift+J / Shift+K 快捷键调出。
+        // 方向键环与侧栏显示顺序完全一致（今日/明日也参与循环）。
         let views = [
+            View::Today,
+            View::Tomorrow,
             View::Inbox,
             View::Next,
             View::Waiting,
@@ -692,23 +700,12 @@ impl<'a> App<'a> {
             View::Someday,
             View::Reference,
             View::Done,
-            View::Review,
-            View::Tags,
             View::Archived,
+            View::Tags,
+            View::Review,
         ];
-        // 若当前停在日视图，映射到相邻主视图，避免方向键跳到随机位置。
-        let anchor = match self.view {
-            View::Today => View::Inbox,
-            View::Tomorrow => View::Next,
-            v => v,
-        };
-        let idx = views.iter().position(|v| *v == anchor).unwrap_or(0) as isize;
-        let mut next_idx = idx + delta;
-        if next_idx < 0 {
-            next_idx = views.len() as isize - 1;
-        } else if next_idx >= views.len() as isize {
-            next_idx = 0;
-        }
+        let idx = views.iter().position(|v| *v == self.view).unwrap_or(0) as isize;
+        let next_idx = (idx + delta).rem_euclid(views.len() as isize);
         self.set_view(views[next_idx as usize]);
     }
 

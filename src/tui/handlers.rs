@@ -52,6 +52,32 @@ impl<'a> AppHandlers for App<'a> {
     }
 
     fn handle_normal(&mut self, key: KeyEvent) -> Result<()> {
+        if self.show_help {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down | KeyCode::PageDown => {
+                    self.help_scroll = self.help_scroll.saturating_add(1);
+                    return Ok(());
+                }
+                KeyCode::Char('k') | KeyCode::Up | KeyCode::PageUp => {
+                    self.help_scroll = self.help_scroll.saturating_sub(1);
+                    return Ok(());
+                }
+                KeyCode::Char('g') => {
+                    self.help_scroll = 0;
+                    return Ok(());
+                }
+                KeyCode::Char('G') => {
+                    self.help_scroll = usize::MAX;
+                    return Ok(());
+                }
+                KeyCode::Esc => {
+                    self.show_help = false;
+                    self.help_scroll = 0;
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Esc => {
                 if self.is_reviewing {
@@ -95,6 +121,19 @@ impl<'a> AppHandlers for App<'a> {
             }
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') | KeyCode::F(1) => self.show_help = !self.show_help,
+            KeyCode::F(2) => {
+                self.show_shortcut_bar = !self.show_shortcut_bar;
+                self.status_message = if self.show_shortcut_bar {
+                    crate::tr!(self.lang, "已显示快捷键条", "Shortcut bar shown").into()
+                } else {
+                    crate::tr!(
+                        self.lang,
+                        "已隐藏快捷键条 (F2 显示)",
+                        "Shortcut bar hidden (F2 to show)"
+                    )
+                    .into()
+                };
+            }
             KeyCode::F(5) => {
                 self.theme = self.theme.toggle();
                 let _ = crate::repo::settings::set(
@@ -135,14 +174,14 @@ impl<'a> AppHandlers for App<'a> {
                     }
                 };
             }
-            KeyCode::Char('h') => {
+            KeyCode::Char('h') | KeyCode::Left => {
                 self.pane = match self.pane {
                     Pane::Right => Pane::Center,
                     Pane::Center => Pane::Left,
                     Pane::Left => Pane::Left,
                 };
             }
-            KeyCode::Char('l') => {
+            KeyCode::Char('l') | KeyCode::Right => {
                 self.pane = match self.pane {
                     Pane::Left => Pane::Center,
                     Pane::Center => Pane::Right,
@@ -150,14 +189,14 @@ impl<'a> AppHandlers for App<'a> {
                 };
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                if self.pane == Pane::Left {
+                if self.pane == Pane::Left && self.mode != Mode::Visual {
                     self.next_view(1);
                 } else {
                     self.move_sel(1);
                 }
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if self.pane == Pane::Left {
+                if self.pane == Pane::Left && self.mode != Mode::Visual {
                     self.next_view(-1);
                 } else {
                     self.move_sel(-1);
@@ -307,6 +346,30 @@ impl<'a> AppHandlers for App<'a> {
             KeyCode::Char('g') => self.move_sel(-10000),
             KeyCode::Char('G') => self.move_sel(10000),
             KeyCode::Char('A') | KeyCode::Char('D') | KeyCode::Delete => {
+                // 归档箱视图：D / Delete 触发永久删除（带确认）。A 仍走归档逻辑。
+                if self.view == View::Archived
+                    && matches!(key.code, KeyCode::Char('D') | KeyCode::Delete)
+                {
+                    let mut ids = vec![];
+                    if self.mode == Mode::Visual && !self.selected_ids.is_empty() {
+                        ids.extend(self.selected_ids.iter().cloned());
+                    } else if let Some(row) = self.items.get(self.selected).cloned() {
+                        ids.push(row.id);
+                    }
+                    if ids.is_empty() {
+                        return Ok(());
+                    }
+                    self.pending_purge_ids = ids;
+                    self.set_mode(Mode::ConfirmPurge);
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "永久删除归档箱中 {} 项? (y/Enter 确认, n/Esc 取消)",
+                        "Permanently delete {} archived item(s)? (y/Enter confirm, n/Esc cancel)",
+                        self.pending_purge_ids.len()
+                    )
+                    .to_string();
+                    return Ok(());
+                }
                 if self.view == View::Tags {
                     if let Some(row) = self.items.get(self.selected).cloned() {
                         let tag_name = row.title.trim_start_matches('@');
@@ -486,6 +549,7 @@ impl<'a> AppHandlers for App<'a> {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
                     let ids = std::mem::take(&mut self.pending_archive_ids);
+                    let was_visual = !self.selected_ids.is_empty();
                     let mut count = 0;
                     for id in &ids {
                         if let Ok(task) = tasks::get(self.conn, id) {
@@ -505,19 +569,71 @@ impl<'a> AppHandlers for App<'a> {
                         }
                     }
                     self.set_mode(Mode::Normal);
-                    self.status_message =
-                        crate::tr!(self.lang, "已归档 {} 项", "archived {} items", count);
-                    if self.mode == Mode::Visual {
+                    if was_visual {
                         self.selected_ids.clear();
                         self.visual_start_idx = None;
                     }
+                    self.status_message =
+                        crate::tr!(self.lang, "已归档 {} 项", "archived {} items", count);
                     self.reload()?;
                 }
                 KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
                     self.pending_archive_ids.clear();
+                    let was_visual = !self.selected_ids.is_empty();
                     self.set_mode(Mode::Normal);
+                    if was_visual {
+                        self.selected_ids.clear();
+                        self.visual_start_idx = None;
+                    }
                     self.status_message =
                         crate::tr!(self.lang, "归档已取消", "Archive cancelled").into();
+                    self.reload()?;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
+        if self.mode == Mode::ConfirmPurge {
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    let ids = std::mem::take(&mut self.pending_purge_ids);
+                    let was_visual = !self.selected_ids.is_empty();
+                    let mut count = 0;
+                    for id in &ids {
+                        // 若当前番茄钟正聚焦于该任务，先停止它再删除。
+                        if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                            if pomo.task_id.as_deref() == Some(id.as_str()) {
+                                let _ = crate::commands::pomo::stop();
+                            }
+                        }
+                        if tasks::purge(self.conn, id).is_ok() {
+                            count += 1;
+                        }
+                    }
+                    self.set_mode(Mode::Normal);
+                    if was_visual {
+                        self.selected_ids.clear();
+                        self.visual_start_idx = None;
+                    }
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "已永久删除 {} 项",
+                        "permanently deleted {} items",
+                        count
+                    );
+                    self.reload()?;
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.pending_purge_ids.clear();
+                    let was_visual = !self.selected_ids.is_empty();
+                    self.set_mode(Mode::Normal);
+                    if was_visual {
+                        self.selected_ids.clear();
+                        self.visual_start_idx = None;
+                    }
+                    self.status_message =
+                        crate::tr!(self.lang, "删除已取消", "Purge cancelled").into();
                     self.reload()?;
                 }
                 _ => {}
@@ -968,7 +1084,7 @@ impl<'a> AppHandlers for App<'a> {
                 self.set_mode(Mode::Normal);
                 self.input.clear();
             }
-            Mode::Normal | Mode::Visual | Mode::ConfirmArchive => {}
+            Mode::Normal | Mode::Visual | Mode::ConfirmArchive | Mode::ConfirmPurge => {}
         }
         Ok(())
     }

@@ -1,7 +1,8 @@
 use super::app::{pad_right, App, Mode, Pane, View};
+use super::keys::{ctx_of, help_rows, status_strip, strip_keys, KeyGroup};
+use super::status_cn;
 use super::ui;
 use super::ui::build_list_items;
-use super::{next_hint, status_cn};
 use crate::model::event;
 use crate::parser::{
     parse_quick_add, parse_rrule_shorthand, priority_letter, tokenize_quick_add, QuickAddKind,
@@ -139,27 +140,12 @@ impl<'a> AppRender for App<'a> {
             ])
             .split(chunks[0]);
 
-        let left_chunks = if self.show_help {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-                .split(body[0])
-        } else {
-            Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(100)])
-                .split(body[0])
-        };
-
-        self.render_guide(f, left_chunks[0]);
-        if self.show_help {
-            self.render_help_drawer(f, left_chunks[1]);
-        }
+        self.render_guide(f, body[0]);
 
         self.render_list(f, body[1]);
         self.render_detail(f, body[2]);
 
-        // 状态栏 (Statusline)
+        // 状态栏（单行）：[MODE][视图] + 内容区(消息 / F2 提示 / 全局条) | [gtp]
         let mode_str = match self.mode {
             Mode::Normal => " NORMAL ",
             Mode::Visual => " VISUAL ",
@@ -172,7 +158,66 @@ impl<'a> AppRender for App<'a> {
         };
         let mode_fg = self.theme.bg;
 
-        let status_left = Line::from(vec![
+        let status_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(5)])
+            .split(chunks[1]);
+
+        // 内容区三态：消息 > F2 关闭提示 > 全局键条。
+        let mut content_spans: Vec<Span> = Vec::new();
+        if !self.status_message.is_empty() {
+            content_spans.push(Span::styled(
+                format!(" {}", self.status_message),
+                Style::default()
+                    .fg(self.theme.status_fg)
+                    .bg(self.theme.status_bg),
+            ));
+        } else if !self.show_shortcut_bar {
+            content_spans.push(Span::styled(
+                crate::tr!(
+                    self.lang,
+                    "按 F2 显示快捷键条",
+                    "Press F2 to show shortcut bar"
+                ),
+                Style::default()
+                    .fg(self.theme.text_dim)
+                    .bg(self.theme.status_bg),
+            ));
+        } else {
+            content_spans.push(Span::styled(
+                " ⌘ ",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .bg(self.theme.status_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            let items = status_strip(self.lang);
+            for (i, (k, d)) in items.iter().enumerate() {
+                // 两种颜色交替，视觉上间隔开每一条。
+                let key_color = if i % 2 == 0 {
+                    self.theme.accent
+                } else {
+                    Color::Cyan
+                };
+                content_spans.push(Span::styled(
+                    format!("{:<3} {}", k, d),
+                    Style::default()
+                        .fg(key_color)
+                        .bg(self.theme.status_bg)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                if i + 1 < items.len() {
+                    content_spans.push(Span::styled(
+                        " · ",
+                        Style::default()
+                            .fg(self.theme.text_dim)
+                            .bg(self.theme.status_bg),
+                    ));
+                }
+            }
+        }
+
+        let mut status_spans = vec![
             Span::styled(
                 mode_str,
                 Style::default()
@@ -187,48 +232,29 @@ impl<'a> AppRender for App<'a> {
                     .bg(self.theme.status_bg)
                     .add_modifier(Modifier::BOLD),
             ),
-        ]);
-
-        let status_msg = if self.status_message.is_empty() {
-            String::new()
-        } else {
-            format!(" {} ", self.status_message)
-        };
-        let status_right = Line::from(vec![
-            Span::styled(
-                status_msg,
-                Style::default()
-                    .fg(self.theme.status_fg)
-                    .bg(self.theme.status_bg),
-            ),
-            Span::styled(
-                " gtp ".to_string(),
+        ];
+        status_spans.extend(content_spans);
+        f.render_widget(
+            Paragraph::new(Line::from(status_spans))
+                .style(Style::default().bg(self.theme.status_bg)),
+            status_layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                " gtp ",
                 Style::default()
                     .fg(self.theme.bg)
                     .bg(self.theme.accent)
                     .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-
-        let status_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(chunks[1]);
-
-        f.render_widget(
-            Paragraph::new(status_left).style(Style::default().bg(self.theme.status_bg)),
-            status_layout[0],
-        );
-        f.render_widget(
-            Paragraph::new(status_right)
-                .style(Style::default().bg(self.theme.status_bg))
-                .alignment(Alignment::Right),
+            ))
+            .alignment(Alignment::Right),
             status_layout[1],
         );
 
         if self.mode != Mode::Normal
             && self.mode != Mode::SchedulingCalendar
             && self.mode != Mode::ConfirmArchive
+            && self.mode != Mode::ConfirmPurge
         {
             let title = match self.mode {
                 Mode::Search => {
@@ -297,7 +323,7 @@ impl<'a> AppRender for App<'a> {
                     " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) ",
                     " Custom pomodoro lengths (format: work;short;long, e.g. 25;5;15) "
                 ),
-                Mode::Normal | Mode::Visual | Mode::ConfirmArchive => "",
+                Mode::Normal | Mode::Visual | Mode::ConfirmArchive | Mode::ConfirmPurge => "",
             };
 
             let mut text_lines: Vec<Line> = Vec::new();
@@ -462,6 +488,11 @@ impl<'a> AppRender for App<'a> {
                 self.centered_rect(76, 30, size)
             };
             self.render_syntax_drawer(f, syntax_area);
+        }
+
+        if self.show_help {
+            let help_area = self.centered_rect(72, size.height.saturating_sub(4), size);
+            self.render_help_drawer(f, help_area);
         }
 
         if let Some(ref popup) = self.popup {
@@ -772,202 +803,53 @@ impl<'a> AppRender for App<'a> {
             .border_style(Style::default().fg(self.theme.accent))
             .title(crate::tr!(
                 self.lang,
-                " 快捷键指南 (F1/?) ",
-                " Shortcuts (F1/?) "
+                " 快捷键指南 (F1/?) · hjkl 滚动 · Esc 关闭 ",
+                " Shortcuts (F1/?) · hjkl scroll · Esc close "
             ));
-        let keys: Vec<(&str, &str)> = vec![
-            (
-                "h/l",
-                crate::tr!(
-                    self.lang,
-                    "切换面板 (左/中/右栏)",
-                    "switch pane (left/center/right)"
-                ),
-            ),
-            (
-                "j/k",
-                crate::tr!(self.lang, "上下移动列表选项", "move up/down the list"),
-            ),
-            (
-                "1-9",
-                crate::tr!(
-                    self.lang,
-                    "切换视图 (9=标签库, 8=归档箱)",
-                    "switch view (9=tags, 8=archive)"
-                ),
-            ),
-            (
-                "⇧J/⇧K",
-                crate::tr!(
-                    self.lang,
-                    "今日 / 明日视图 (Shift+J / Shift+K)",
-                    "today / tomorrow view (Shift+J / Shift+K)"
-                ),
-            ),
-            (
-                "/",
-                crate::tr!(
-                    self.lang,
-                    "全局搜索 (标题与备注)",
-                    "global search (title & notes)"
-                ),
-            ),
-            (
-                "f",
-                crate::tr!(self.lang, "情境/标签过滤 (Context)", "context/tag filter"),
-            ),
-            (
-                "a",
-                crate::tr!(
-                    self.lang,
-                    "快速捕获任务 (Inbox)",
-                    "quick capture task (Inbox)"
-                ),
-            ),
-            (
-                "n",
-                crate::tr!(
-                    self.lang,
-                    "编辑长备注 ($EDITOR)",
-                    "edit long notes ($EDITOR)"
-                ),
-            ),
-            (
-                "e",
-                crate::tr!(self.lang, "编辑任务标题", "edit task title"),
-            ),
-            (
-                "d",
-                crate::tr!(self.lang, "修改截止时间 (due)", "edit due time"),
-            ),
-            (
-                "L",
-                crate::tr!(
-                    self.lang,
-                    "修改循环规则 (rrule)",
-                    "edit recurrence rule (rrule)"
-                ),
-            ),
-            (
-                "W",
-                crate::tr!(self.lang, "修改委派对象 (Delegated)", "edit delegated-to"),
-            ),
-            (
-                "C",
-                crate::tr!(
-                    self.lang,
-                    "新增检查单项 / SPC 勾选",
-                    "add checklist item / Space to tick"
-                ),
-            ),
-            (
-                "r",
-                crate::tr!(self.lang, "开启每周回顾 Hook", "start weekly review hook"),
-            ),
-            (
-                "Enter",
-                crate::tr!(
-                    self.lang,
-                    "理清任务 / 标记下一步",
-                    "clarify task / mark next"
-                ),
-            ),
-            (
-                "c",
-                crate::tr!(self.lang, "日历排期 (Schedule)", "calendar schedule"),
-            ),
-            (
-                "w",
-                crate::tr!(self.lang, "标记为等待中 (Waiting)", "mark as waiting"),
-            ),
-            (
-                "s",
-                crate::tr!(
-                    self.lang,
-                    "标记为将来/也许 (Someday)",
-                    "mark as someday/maybe"
-                ),
-            ),
-            (
-                "x",
-                crate::tr!(self.lang, "标记为已完成 (Done)", "mark as done"),
-            ),
-            (
-                "A/D",
-                crate::tr!(
-                    self.lang,
-                    "归档任务 (y确认/n取消)",
-                    "archive task (y confirm / n cancel)"
-                ),
-            ),
-            (
-                "u",
-                crate::tr!(self.lang, "恢复归档箱中的任务", "restore task from archive"),
-            ),
-            (
-                "P/S",
-                crate::tr!(
-                    self.lang,
-                    "开启专注(番茄钟) / 停止专注",
-                    "start pomodoro / stop focus"
-                ),
-            ),
-            (
-                "[",
-                crate::tr!(
-                    self.lang,
-                    "自定义番茄钟时长 (工作/休息)",
-                    "customize pomodoro lengths (work/break)"
-                ),
-            ),
-            (
-                "Ctrl+p",
-                crate::tr!(self.lang, "弹出语法说明指南", "toggle syntax guide"),
-            ),
-            (
-                "F5",
-                crate::tr!(
-                    self.lang,
-                    "切换主题 (深色/亮色)",
-                    "toggle theme (dark/light)"
-                ),
-            ),
-            (
-                "F6",
-                crate::tr!(
-                    self.lang,
-                    "切换界面语言 (中/英)",
-                    "toggle UI language (zh/en)"
-                ),
-            ),
-            (
-                "F1/?",
-                crate::tr!(self.lang, "关闭/展开快捷键面板", "toggle shortcut panel"),
-            ),
-            ("q", crate::tr!(self.lang, "退出 TUI 系统", "quit TUI")),
-        ];
-        let mut rows = vec![];
-        let visible_keys = if self.help_scroll < keys.len() {
-            &keys[self.help_scroll..]
-        } else {
-            &keys[..]
-        };
-        for (k, desc) in visible_keys.iter() {
-            rows.push(ratatui::widgets::Row::new(vec![
-                ratatui::text::Line::from(Span::styled(
-                    format!("{:>6} ", k),
+
+        let ctx = ctx_of(self);
+        let rows = help_rows(&ctx, self.lang);
+        let mut lines: Vec<Line> = Vec::new();
+        let mut last_group: Option<KeyGroup> = None;
+        for (g, k, desc, applicable) in rows {
+            if last_group != Some(g) {
+                lines.push(Line::from(Span::styled(
+                    g.title(self.lang),
                     Style::default()
-                        .fg(Color::Cyan)
+                        .fg(self.theme.text_dim)
                         .add_modifier(Modifier::BOLD),
-                )),
-                ratatui::text::Line::from(Span::raw(*desc)),
-            ]));
+                )));
+                last_group = Some(g);
+            }
+            if applicable {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{:>6} ", k),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw(desc),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("{:>6} ", k),
+                        Style::default().fg(self.theme.text_dim),
+                    ),
+                    Span::styled(desc, Style::default().fg(self.theme.text_dim)),
+                ]));
+            }
         }
-        let widths = [Constraint::Length(8), Constraint::Min(0)];
-        let table = ratatui::widgets::Table::new(rows, widths)
-            .block(keys_block)
-            .column_spacing(1);
-        f.render_widget(table, area);
+
+        let content_h = area.height.saturating_sub(2) as usize;
+        let scroll = self.help_scroll.min(lines.len().saturating_sub(content_h));
+        f.render_widget(
+            Paragraph::new(lines)
+                .scroll((scroll as u16, 0))
+                .block(keys_block),
+            area,
+        );
     }
 
     fn render_syntax_drawer(&self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
@@ -1313,6 +1195,8 @@ impl<'a> AppRender for App<'a> {
 
         let cur = self.view;
         let is_left_pane = self.pane == Pane::Left;
+        // 矮终端（如 80×24）收紧组间空行，把行数让给下方的 [Keys] 动态键。
+        let spacious = area.height >= 30;
 
         let mut add_group = |views: &[(char, View)], title: &'static str| {
             lines.push(Line::from(Span::styled(
@@ -1361,7 +1245,9 @@ impl<'a> AppRender for App<'a> {
                     ]));
                 }
             }
-            lines.push(Line::from(""));
+            if spacious {
+                lines.push(Line::from(""));
+            }
         };
 
         add_group(&[('J', View::Today), ('K', View::Tomorrow)], "  [Day] ⇧+");
@@ -1383,9 +1269,9 @@ impl<'a> AppRender for App<'a> {
                 .add_modifier(Modifier::BOLD),
         )));
         for (key, v) in &[
-            ('r', View::Review),
-            ('9', View::Tags),
             ('8', View::Archived),
+            ('9', View::Tags),
+            ('r', View::Review),
         ] {
             let active = cur == *v;
             let (icon, label) = match v {
@@ -1416,19 +1302,45 @@ impl<'a> AppRender for App<'a> {
                 ]));
             }
         }
-        lines.push(Line::from(""));
+        if spacious {
+            lines.push(Line::from(""));
+        }
 
-        // 提示
-        lines.push(Line::from(Span::styled(
-            "  [Hint]",
-            Style::default()
-                .fg(self.theme.text_dim)
-                .add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(Span::styled(
-            format!("  {}", next_hint(self.lang, self.view)),
-            Style::default().fg(Color::Gray),
-        )));
+        // 动态快捷键：按当前视图/选择态/模式过滤，并严格按剩余行数截断。
+        let rows_used = lines.len() as isize;
+        let avail = area.height as isize - 2 - rows_used;
+        let ctx = ctx_of(self);
+        let keys = strip_keys(&ctx, self.lang);
+        if avail >= 1 && !keys.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  [Keys]",
+                Style::default()
+                    .fg(self.theme.text_dim)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            let mut budget = avail - 1;
+            let mut shown = 0;
+            for (k, desc) in &keys {
+                if budget <= 0 {
+                    break;
+                }
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("   {:>6} ", k),
+                        Style::default().fg(self.theme.text_dim),
+                    ),
+                    Span::styled(*desc, Style::default().fg(Color::Gray)),
+                ]));
+                shown += 1;
+                budget -= 1;
+            }
+            if shown < keys.len() && budget >= 1 {
+                lines.push(Line::from(Span::styled(
+                    format!("   … {} 更多 (F1)", keys.len() - shown),
+                    Style::default().fg(self.theme.text_dim),
+                )));
+            }
+        }
 
         let border_color = if self.pane == Pane::Left {
             self.theme.accent

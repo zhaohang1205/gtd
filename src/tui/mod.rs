@@ -1,6 +1,7 @@
 pub mod app;
 pub mod calendar;
 pub mod handlers;
+pub mod keys;
 pub mod render;
 pub mod theme;
 pub mod ui;
@@ -51,44 +52,6 @@ pub(crate) fn view_label(lang: crate::i18n::Lang, v: View) -> &'static str {
         View::Review => crate::tr!(lang, "周回顾", "Review"),
         View::Archived => crate::tr!(lang, "归档箱", "Archived"),
         View::Tags => crate::tr!(lang, "标签库", "Tags"),
-    }
-}
-
-/// 根据当前视图，给出“下一步该做什么”的提示。
-pub(crate) fn next_hint(lang: crate::i18n::Lang, v: View) -> &'static str {
-    match v {
-        View::Inbox => crate::tr!(
-            lang,
-            "按 Enter 理清，决定它的去向",
-            "Enter to clarify and decide its fate"
-        ),
-        View::Today => crate::tr!(
-            lang,
-            "今日到期/逾期任务，逐条动手完成",
-            "Due/overdue today — knock them out one by one"
-        ),
-        View::Tomorrow => crate::tr!(
-            lang,
-            "明日任务与需结转的未完成任务",
-            "Tomorrow's tasks plus overdue carry-overs"
-        ),
-        View::Next => crate::tr!(lang, "选一条开始行动（做）", "Pick one and get moving"),
-        View::Waiting => crate::tr!(lang, "跟进被阻塞的事项", "Follow up on blocked items"),
-        View::Scheduled => crate::tr!(lang, "按排程时间执行", "Execute on schedule"),
-        View::Someday => crate::tr!(
-            lang,
-            "定期回顾是否激活",
-            "Review periodically whether to activate"
-        ),
-        View::Reference => crate::tr!(lang, "需要时检索查阅", "Look up when needed"),
-        View::Done => crate::tr!(lang, "可归档已完成事项", "Archive completed items"),
-        View::Review => crate::tr!(lang, "清空各类积压", "Clear the backlogs"),
-        View::Archived => crate::tr!(lang, "选中后按 u 恢复任务", "Press u to restore a task"),
-        View::Tags => crate::tr!(
-            lang,
-            "按 a 新增标签，按 D 删除自定义标签，按 f 过滤",
-            "a: add tag, D: delete custom tag, f: filter"
-        ),
     }
 }
 
@@ -177,7 +140,7 @@ fn run_app(terminal: &mut Terminal<CrosstermBackend<Stdout>>, conn: &Connection)
                     match m.kind {
                         crossterm::event::MouseEventKind::ScrollDown => {
                             if is_left_panel && app.show_help {
-                                app.help_scroll = app.help_scroll.saturating_add(1).min(20);
+                                app.help_scroll = app.help_scroll.saturating_add(1);
                             } else {
                                 app.move_sel(1);
                             }
@@ -700,31 +663,129 @@ mod tests {
     }
 
     #[test]
-    fn next_view_skips_today_tomorrow() {
+    fn next_view_cycles_full_ring() {
         let mut conn = Connection::open(":memory:").unwrap();
         migrate::run(&mut conn).unwrap();
         let mut app = App::new(&conn).unwrap();
         app.popup = None;
 
-        app.view = View::Inbox;
-        app.next_view(1);
-        assert_eq!(
-            app.view,
+        let ring = [
+            View::Today,
+            View::Tomorrow,
+            View::Inbox,
             View::Next,
-            "Inbox 方向键下一个是 Next，而非 Today"
+            View::Waiting,
+            View::Scheduled,
+            View::Someday,
+            View::Reference,
+            View::Done,
+            View::Archived,
+            View::Tags,
+            View::Review,
+        ];
+        for (i, v) in ring.iter().enumerate() {
+            app.view = *v;
+            app.next_view(1);
+            assert_eq!(
+                app.view,
+                ring[(i + 1) % ring.len()],
+                "正向：{:?} 的下一个",
+                v
+            );
+        }
+        for (i, v) in ring.iter().enumerate() {
+            app.view = *v;
+            app.next_view(-1);
+            assert_eq!(
+                app.view,
+                ring[(i + ring.len() - 1) % ring.len()],
+                "反向：{:?} 的上一个",
+                v
+            );
+        }
+    }
+
+    #[test]
+    fn key_table_respects_view_selection_and_mode() {
+        use crate::i18n::Lang;
+        use crate::tui::keys::{status_strip, strip_keys, Ctx, KEY_TABLE, NON_TASK_VIEWS};
+
+        let ctx = |v: View, sel: bool| Ctx {
+            view: v,
+            mode: Mode::Normal,
+            has_selection: sel,
+            is_reviewing: false,
+            pomo_active: false,
+        };
+        let keys = |v: View, sel: bool| strip_keys(&ctx(v, sel), Lang::Zh);
+
+        // 任务操作键仅在选中时出现，且全局键不进动态条
+        let inbox_sel = keys(View::Inbox, true);
+        assert!(
+            inbox_sel.iter().any(|(k, _)| *k == "Enter"),
+            "有选中→含 Enter"
+        );
+        assert!(
+            !inbox_sel.iter().any(|(k, _)| *k == "hjkl"),
+            "全局导航键不进动态条"
+        );
+        assert!(
+            !inbox_sel.iter().any(|(k, _)| *k == "q"),
+            "全局退出键不进动态条"
+        );
+        // 空 Inbox 无任务操作 → 动态条为空（渲染层隐藏整块）
+        assert!(keys(View::Inbox, false).is_empty(), "无选中→任务操作条为空");
+
+        // 归档箱：u/D 需要选中
+        assert!(keys(View::Archived, false).is_empty());
+        let arch_sel = keys(View::Archived, true);
+        assert!(arch_sel.iter().any(|(k, _)| *k == "u"));
+        assert!(arch_sel.iter().any(|(k, _)| *k == "D"));
+
+        // 非任务视图：任务操作键不出现（即使有选中行）
+        let tags_sel = keys(View::Tags, true);
+        assert!(!tags_sel.iter().any(|(k, _)| *k == "Enter"));
+        assert!(tags_sel.iter().any(|(k, _)| *k == "a"), "Tags 有新增标签");
+        assert!(tags_sel.iter().any(|(k, _)| *k == "D"), "Tags 有删除标签");
+
+        // 周回顾进行中才出现 R
+        let mut reviewing = ctx(View::Inbox, true);
+        reviewing.is_reviewing = true;
+        assert!(
+            strip_keys(&reviewing, Lang::Zh)
+                .iter()
+                .any(|(k, _)| *k == "R"),
+            "周回顾中→含 R"
+        );
+        assert!(!keys(View::Inbox, true).iter().any(|(k, _)| *k == "R"));
+
+        // 输入/确认模式 → 模式键
+        let confirm = Ctx {
+            mode: Mode::ConfirmArchive,
+            ..ctx(View::Inbox, true)
+        };
+        assert!(
+            strip_keys(&confirm, Lang::Zh)
+                .iter()
+                .any(|(k, _)| *k == "y/Enter"),
+            "确认模式→含 y/Enter"
         );
 
-        app.view = View::Next;
-        app.next_view(1);
-        assert_eq!(app.view, View::Waiting);
+        // 状态栏全局条：含压缩后的 hjkl 与捕获/退出，不含低频键 g/G 与视图键
+        let strip = status_strip(Lang::Zh);
+        assert!(strip.iter().any(|(k, _)| *k == "hjkl"), "全局条含 hjkl");
+        assert!(strip.iter().any(|(k, _)| *k == "q"), "全局条含 q");
+        assert!(!strip.iter().any(|(k, _)| *k == "g/G"), "全局条不含 g/G");
+        assert!(!strip.iter().any(|(k, _)| *k == "1-9"), "全局条不含视图键");
 
-        // 从日视图用方向键也能离开，且不会停在日视图
-        app.view = View::Today;
-        app.next_view(1);
-        assert_eq!(app.view, View::Next);
-        app.view = View::Tomorrow;
-        app.next_view(-1);
-        assert!(app.view != View::Today && app.view != View::Tomorrow);
+        // 表不变量：每条都有键与双语描述；NON_TASK_VIEWS 恰好是 Tags/Archived
+        assert!(!KEY_TABLE.is_empty());
+        for k in KEY_TABLE {
+            assert!(!k.keys.is_empty());
+            assert!(!k.zh.is_empty());
+            assert!(!k.en.is_empty());
+        }
+        assert_eq!(NON_TASK_VIEWS, &[View::Tags, View::Archived]);
     }
 
     #[test]
@@ -831,6 +892,105 @@ mod tests {
         assert!(s.contains("完成"), "显示归档原因：完成");
         assert!(s.contains("删除"), "显示归档原因：删除");
         assert!(!s.contains("逾期"), "归档箱不再显示逾期");
+    }
+
+    #[test]
+    fn archived_view_can_purge_task() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        let t = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "purge-from-archive".into(),
+                status: task::Status::Inbox,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::archive(&conn, &t.id).unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('8')).unwrap(); // 归档箱视图
+        assert_eq!(app.view, View::Archived);
+        app.handle_key(key('D')).unwrap(); // 触发永久删除确认
+        assert_eq!(app.mode, Mode::ConfirmPurge, "进入永久删除确认");
+        app.handle_key(key('y')).unwrap(); // 确认
+        assert!(tasks::get(&conn, &t.id).is_err(), "任务已被永久删除");
+        assert!(app.items.is_empty(), "归档箱列表已刷新为空");
+        assert_eq!(app.view, View::Archived, "仍停留在归档箱视图");
+
+        // 取消路径：再归档一条，按 D 后按 n 应保留任务
+        let t2 = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "keep-me".into(),
+                status: task::Status::Inbox,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::archive(&conn, &t2.id).unwrap();
+        app.handle_key(key('8')).unwrap();
+        app.handle_key(key('D')).unwrap();
+        assert_eq!(app.mode, Mode::ConfirmPurge);
+        app.handle_key(key('n')).unwrap();
+        assert_eq!(app.mode, Mode::Normal, "取消后回到 Normal");
+        assert!(tasks::get(&conn, &t2.id).is_ok(), "取消删除后任务仍在");
+    }
+
+    #[test]
+    fn archived_view_can_purge_multiple_in_visual_mode() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+        for i in 0..3 {
+            let t = tasks::create_capture(
+                &conn,
+                &CaptureInput {
+                    title: format!("bulk-purge-{i}"),
+                    status: task::Status::Inbox,
+                    tag_names: vec![],
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            tasks::archive(&conn, &t.id).unwrap();
+        }
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('8')).unwrap(); // 归档箱视图
+                                           // 归档按 archived_at DESC 排序，但快速连建三条可能落同一毫秒导致并列序不定，
+                                           // 故按实际列表顺序取前两行，而非依赖插入顺序。
+        let top_two: Vec<String> = tasks::list_archived(&conn)
+            .unwrap()
+            .into_iter()
+            .take(2)
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(top_two.len(), 2, "归档箱至少两条用于批量测试");
+        app.handle_key(key('v')).unwrap(); // 进入可视模式
+        app.handle_key(key('j')).unwrap(); // 选中前两项
+        app.handle_key(key('D')).unwrap(); // 触发批量永久删除确认
+        assert_eq!(app.mode, Mode::ConfirmPurge, "进入批量永久删除确认");
+        assert_eq!(app.pending_purge_ids.len(), 2, "可视模式选中了 2 项");
+        app.handle_key(key('y')).unwrap(); // 确认
+
+        for id in &top_two {
+            assert!(tasks::get(&conn, id).is_err(), "选中项已删除: {}", id);
+        }
+        let remaining: Vec<_> = tasks::list_archived(&conn).unwrap();
+        assert_eq!(remaining.len(), 1, "归档箱只剩未被选中的任务");
+        assert!(
+            remaining[0].id != top_two[0] && remaining[0].id != top_two[1],
+            "剩余项未被选中"
+        );
+        assert_eq!(app.mode, Mode::Normal, "删除后退出可视模式");
+        assert!(app.selected_ids.is_empty(), "选择集已清空");
     }
 
     #[test]
