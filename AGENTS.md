@@ -11,7 +11,7 @@ GTD terminal task manager (`gtp`) — a Rust binary (edition 2021, **no lib targ
 
 ## Architecture (layers depend only inward)
 
-- `cli.rs` — clap `Command` enum, one variant per CLI action. Default command (no args) is `Tui`.
+- `cli.rs` — clap `Command` enum, one variant per CLI action. Default command (no args) is `Tui`. `gtp completions <shell>` is intercepted in `main.rs` before the DB opens (zero side effects); the `commands::run` arm is intentionally unreachable.
 - `commands/` — thin handlers; `mod.rs::run` dispatches. `pomo.rs` handles the daemon/waybar logic.
 - `repo/` — rusqlite data access; `tasks.rs` holds most domain logic (`create_capture`, `transition`, `schedule`, `resolve_project`, `list`). `mod.rs::log_event` writes the audit timeline.
 - `model/` — plain structs + enums; `event.rs` holds event-type string consts.
@@ -28,6 +28,7 @@ GTD terminal task manager (`gtp`) — a Rust binary (edition 2021, **no lib targ
 - **DB paths**: `~/.config/gtp/gtp.db` and `~/.config/gtp/pomo.json` both derive from `dirs::config_dir()` — never hardcode.
 - **ID resolution**: commands accept a task id, a unique id-prefix, or an exact title (`resolve_project`).
 - **Archive is soft-delete**: sets `archived_at` and `archive_reason` (`completed` when the task was Done at archive time, else `deleted`); list queries filter `archived_at IS NULL`. `Restore` clears both. The Archived view shows reason + archive time, never the old status or overdue.
+- **Purge is a hard delete**: `gtp purge` / TUI `D` in the Archived view only works on archived tasks (non-archived → `Error::NotArchived`). It's a plain `DELETE FROM tasks` — `task_events`, `task_tags`, and child tasks cascade via `ON DELETE CASCADE`, and there is deliberately no purge event logged (the whole timeline is deleted with it). Supports batch: `v` toggles visual mode (selection range), then `D` + y purges all selected rows; visual mode makes `j`/`k` move the selection even when the left pane is active.
 - **Recurring tasks**: a task with `rrule` reschedules to its next occurrence on `Done` instead of completing. Sorting/filtering uses `effective_due` (`commands/mod.rs`), not the raw due column.
 - **Status lifecycle**: `Inbox → Next / Scheduled / Waiting / Someday / Reference → Done`; `transition` in `repo/tasks.rs` sets the matching `*_at` timestamp.
 - **Pomodoro**: `pomo start` spawns a background `gtp pomo daemon` (ticks every second, writes `pomo.json`, sends `notify-send`). `pomo waybar` emits JSON for a waybar module. `kill_daemon` (pomo.rs) deliberately waits for the old process to exit — concurrent daemons corrupt `pomo.json`; don't "optimize" that away.

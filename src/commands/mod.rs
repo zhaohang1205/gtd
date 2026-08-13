@@ -62,6 +62,7 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
         ),
         Command::Archive { id } => status::archive(conn, &id),
         Command::Restore { id } => status::restore(conn, &id),
+        Command::Purge { id } => status::purge(conn, &id),
         Command::Tag { id, name } => tagging::add(conn, &id, &name),
         Command::Untag { id, name } => tagging::remove(conn, &id, &name),
         Command::Review => review::run(conn),
@@ -85,6 +86,9 @@ pub fn run(cmd: Command, conn: &Connection) -> Result<()> {
             _ => anyhow::bail!("unknown alarm action"),
         },
         Command::Tui => crate::tui::run(conn),
+        Command::Completions { .. } => {
+            anyhow::bail!("`gtp completions` is handled before the database is opened")
+        }
     }
 }
 

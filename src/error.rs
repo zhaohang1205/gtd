@@ -10,4 +10,7 @@ pub enum Error {
 
     #[error("invalid status transition: {from} -> {to}")]
     InvalidTransition { from: String, to: String },
+
+    #[error("task is not archived: {0}")]
+    NotArchived(String),
 }

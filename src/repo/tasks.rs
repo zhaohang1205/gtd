@@ -358,6 +358,22 @@ pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
     get(conn, id)
 }
 
+/// Permanently delete an archived task. Only archived tasks may be purged —
+/// purging a live task is a destructive mistake. The `DELETE` cascades to the
+/// task's `task_events`, `task_tags`, and child `tasks` rows (ON DELETE CASCADE),
+/// so no event is logged for the purge itself.
+pub fn purge(conn: &Connection, id: &str) -> Result<Task> {
+    let id = resolve_id(conn, id)?;
+    let t = get(conn, &id)?;
+    if t.archived_at.is_none() {
+        return Err(Error::NotArchived(id).into());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute("DELETE FROM tasks WHERE id = ?1", rusqlite::params![id])?;
+    tx.commit()?;
+    Ok(t)
+}
+
 /// Count of archived (soft-deleted) tasks, for the guide sidebar badge.
 pub fn count_archived(conn: &Connection) -> Result<usize> {
     let c: usize = conn.query_row(
@@ -531,4 +547,74 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         checklist: serde_json::from_str(&cl_str).unwrap_or_default(),
         archive_reason: r.get(16)?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::migrate;
+
+    /// Build a temp-file DB with migrations applied. Returns the dir to keep it alive.
+    fn test_conn() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gtp.db");
+        let mut conn = Connection::open(&path).unwrap();
+        migrate::run(&mut conn).unwrap();
+        (dir, conn)
+    }
+
+    fn count_rows(conn: &Connection, table: &str, task_id: &str) -> usize {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM {} WHERE task_id = ?1", table),
+            [task_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn purge_archived_deletes_task_and_cascades() {
+        let (_dir, conn) = test_conn();
+        let t = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "purge-me".into(),
+                status: task::Status::Next,
+                tag_names: vec!["home".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        archive(&conn, &t.id).unwrap();
+
+        assert!(count_rows(&conn, "task_events", &t.id) > 0, "有事件记录");
+        assert_eq!(count_rows(&conn, "task_tags", &t.id), 1, "有标签关联");
+
+        let purged = purge(&conn, &t.id).unwrap();
+        assert_eq!(purged.id, t.id);
+        assert!(get(&conn, &t.id).is_err(), "任务已被永久删除");
+        assert_eq!(count_rows(&conn, "task_events", &t.id), 0, "事件级联删除");
+        assert_eq!(count_rows(&conn, "task_tags", &t.id), 0, "标签级联删除");
+    }
+
+    #[test]
+    fn purge_non_archived_fails_and_leaves_task() {
+        let (_dir, conn) = test_conn();
+        let t = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "live-task".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let err = purge(&conn, &t.id).unwrap_err();
+        assert!(
+            err.to_string().contains("not archived"),
+            "非归档任务应被拒绝: {}",
+            err
+        );
+        assert!(get(&conn, &t.id).is_ok(), "任务仍在，未被删除");
+    }
 }

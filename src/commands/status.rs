@@ -60,3 +60,10 @@ pub fn restore(conn: &Connection, id: &str) -> Result<()> {
     println!("restored {}", &id[..8]);
     Ok(())
 }
+
+pub fn purge(conn: &Connection, id: &str) -> Result<()> {
+    let id = tasks::resolve_id(conn, id)?;
+    tasks::purge(conn, &id)?;
+    println!("purged {}", &id[..8]);
+    Ok(())
+}

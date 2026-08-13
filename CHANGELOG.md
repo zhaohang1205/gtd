@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Permanent delete for archived tasks: `gtp purge <id>` (CLI) and `D` in the
+  Archived view (TUI, y/n confirm). Purge only works on archived tasks and
+  cascade-deletes their events/tags via `ON DELETE CASCADE`; no event is logged.
+- Batch purge in the Archived view: enter visual mode with `v`, move with
+  `j`/`k` to range-select, then `D` + y to permanently delete the whole
+  selection at once. Visual mode now takes priority over the left pane so
+  `j`/`k` always move the selection. ConfirmArchive also clears the visual
+  selection after confirming/cancelling (was silently kept before).
 - Open-source release: MIT `LICENSE`, `README.md`, `CHANGELOG.md`, Cargo
   metadata (`license`, `repository`, `rust-version`), and GitHub Actions CI +
   release workflows.
@@ -16,6 +24,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   zero database queries per frame; one-pass today/tomorrow list computation
   (`day_lists`) with a single RRULE expansion per recurring task; batched tag
   fetch (`get_tags_for_tasks`) replacing per-row queries.
+- `gtp completions <bash|zsh|fish|...>` generates shell completion scripts via
+  `clap_complete`, handled before the database is opened so it has no side
+  effects.
+- Richer `--help` output: top-level `long_about` + usage examples, per-command
+  examples for `capture`/`list`/`schedule`/`pomo`/`alarm`, and value-name/help
+  hints for flags. `--p1`/`--p2`/`--p3` are now mutually exclusive.
 
 ### Changed
 
