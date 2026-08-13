@@ -17,6 +17,7 @@ pub struct Theme {
     // Highlight
     pub hl_bg: Color,
     pub hl_fg: Color,
+    pub row_active_bg: Color,
 
     // Status Bar
     pub status_bg: Color,
@@ -42,6 +43,7 @@ impl Theme {
 
             hl_bg: Color::Rgb(49, 50, 68),    // Surface0
             hl_fg: Color::Rgb(137, 180, 250), // Blue
+            row_active_bg: Color::Rgb(30, 60, 110), // 深蓝，活动行背景
 
             status_bg: Color::Rgb(24, 24, 37),    // Mantle
             status_fg: Color::Rgb(186, 194, 222), // Subtext1
@@ -65,6 +67,7 @@ impl Theme {
 
             hl_bg: Color::Rgb(204, 208, 218), // Surface0
             hl_fg: Color::Rgb(30, 102, 245),  // Blue
+            row_active_bg: Color::Rgb(204, 208, 218), // 浅色主题沿用 hl_bg
 
             status_bg: Color::Rgb(230, 233, 239), // Mantle
             status_fg: Color::Rgb(92, 95, 119),   // Subtext1

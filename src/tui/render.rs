@@ -1387,7 +1387,14 @@ impl<'a> AppRender for App<'a> {
                     .border_style(Style::default().fg(border_color))
                     .title(title),
             )
-            .highlight_style(if self.pane == Pane::Center {
+            .highlight_style(if self.theme.is_dark {
+                // 暗色主题：活动行深蓝背景（与标签亮蓝区分），不覆盖任务文本原色。
+                if self.pane == Pane::Center {
+                    Style::default().bg(self.theme.row_active_bg)
+                } else {
+                    Style::default().bg(self.theme.hl_bg)
+                }
+            } else if self.pane == Pane::Center {
                 Style::default()
                     .bg(self.theme.hl_bg)
                     .fg(self.theme.hl_fg)
