@@ -37,8 +37,8 @@ impl<'a> AppRender for App<'a> {
 
         // ── 番茄专注模式：全屏接管 ──
         {
-            let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
-            if !matches!(pomo.phase, crate::model::pomodoro::Phase::Idle) {
+            let is_active = self.pomo.phase != crate::model::pomodoro::Phase::Idle;
+            if is_active {
                 self.hide_pomo_banner = false; // reset so it shows up next time it becomes Idle
                 self.render_focus_mode(f, size);
                 return;
@@ -77,7 +77,7 @@ impl<'a> AppRender for App<'a> {
             f.render_widget(banner, chunks[0]);
             main_area = chunks[1];
         } else if !self.hide_pomo_banner {
-            let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+            let pomo = &self.pomo;
             let today = chrono::Local::now().format("%Y-%m-%d").to_string();
             let today_active = pomo.last_date.as_deref() == Some(today.as_str());
 
@@ -584,7 +584,7 @@ impl<'a> AppRender for App<'a> {
     fn render_focus_mode(&mut self, f: &mut Frame, area: Rect) {
         use crate::model::pomodoro::Phase;
 
-        let pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+        let pomo = &self.pomo;
         let now = crate::time::now_ms();
 
         // ── 时间计算 ──
@@ -599,7 +599,7 @@ impl<'a> AppRender for App<'a> {
         let time_str = format!("{:02}:{:02}", mins, secs);
 
         // ── 阶段配色 ──
-        let (phase_icon, ring_color, dim_color, bg_color) = match pomo.phase {
+        let (phase_icon, ring_color, dim_color, bg_color) = match &pomo.phase {
             Phase::Work => (
                 crate::tr!(self.lang, "🍅 专注", "🍅 Focus"),
                 Color::Rgb(230, 60, 60),

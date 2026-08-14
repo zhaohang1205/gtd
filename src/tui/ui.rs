@@ -55,13 +55,11 @@ fn progress_text(done: Option<usize>, total: Option<usize>) -> String {
 }
 
 pub fn build_list_items(app: &App) -> Vec<ListItem<'static>> {
-    let active_pomo_task_id = crate::repo::pomodoro::get_state().ok().and_then(|s| {
-        if s.phase != crate::model::pomodoro::Phase::Idle {
-            s.task_id
-        } else {
-            None
-        }
-    });
+    let active_pomo_task_id = if app.pomo.phase != crate::model::pomodoro::Phase::Idle {
+        app.pomo.task_id.clone()
+    } else {
+        None
+    };
 
     app.items
         .iter()

@@ -173,27 +173,28 @@ pub fn get_task_tags(conn: &Connection, task_id: &str) -> Result<Vec<Tag>> {
 
 /// 单次查询取出一组任务的标签名，返回 `task_id -> 标签名列表`。
 /// 供列表刷新批量使用，替代逐行 `get_task_tags`。
+/// 按批查询（每批 500），规避 SQLite 默认 `SQLITE_MAX_VARIABLE_NUMBER`(999) 上限。
 pub fn get_tags_for_tasks(
     conn: &Connection,
     ids: &[&str],
 ) -> Result<std::collections::HashMap<String, Vec<String>>> {
-    let mut out = std::collections::HashMap::new();
-    if ids.is_empty() {
-        return Ok(out);
-    }
-    let placeholders = vec!["?"; ids.len()].join(",");
-    let sql = format!(
-        "SELECT tt.task_id, t.name FROM tags t JOIN task_tags tt ON tt.tag_id = t.id \
-         WHERE tt.task_id IN ({}) ORDER BY t.category, t.name",
-        placeholders
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter().copied()), |r| {
-        Ok((r.get::<usize, String>(0)?, r.get::<usize, String>(1)?))
-    })?;
-    for r in rows {
-        let (tid, name) = r?;
-        out.entry(tid).or_default().push(name);
+    let mut out: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    const BATCH: usize = 500;
+    for chunk in ids.chunks(BATCH) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!(
+            "SELECT tt.task_id, t.name FROM tags t JOIN task_tags tt ON tt.tag_id = t.id \
+             WHERE tt.task_id IN ({}) ORDER BY t.category, t.name",
+            placeholders
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(chunk.iter().copied()), |r| {
+            Ok((r.get::<usize, String>(0)?, r.get::<usize, String>(1)?))
+        })?;
+        for r in rows {
+            let (tid, name) = r?;
+            out.entry(tid).or_default().push(name);
+        }
     }
     Ok(out)
 }

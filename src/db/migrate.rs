@@ -51,6 +51,12 @@ pub fn run(conn: &mut Connection) -> anyhow::Result<()> {
         conn.pragma_update(None, "user_version", 7)?;
     }
 
+    if current_version < 8 {
+        let sql9 = include_str!("../../migrations/0009_idx_tasks_due_at.sql");
+        conn.execute_batch(sql9)?;
+        conn.pragma_update(None, "user_version", 8)?;
+    }
+
     Ok(())
 }
 
@@ -117,7 +123,7 @@ mod tests {
         let v: i32 = conn
             .pragma_query_value(None, "user_version", |r| r.get(0))
             .unwrap();
-        assert_eq!(v, 7, "迁移版本推进到 7");
+        assert_eq!(v, 8, "迁移版本推进到 8");
 
         // 幂等：再次运行不改变任何值
         run(&mut conn).unwrap();

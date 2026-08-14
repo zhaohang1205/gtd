@@ -4,6 +4,7 @@ use rusqlite::Connection;
 
 use super::row_from_tags_with_due;
 use crate::model::event::TaskEvent;
+use crate::model::pomodoro::PomoState;
 use crate::model::tag::Tag;
 use crate::model::task::{self, Task};
 use crate::repo::tags;
@@ -28,6 +29,14 @@ pub(crate) fn pad_right(s: &str, width: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// 检查可执行文件是否存在于 PATH 中（不 spawn 进程，避免探测副作用）。
+fn command_in_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join(name).is_file())
 }
 
 /// GTD 的七个状态（数据层不变）。界面里只有 Inbox 和 Next 是“主视图”，
@@ -224,6 +233,10 @@ pub(crate) struct App<'a> {
     /// 循环任务展开结果缓存（task_id -> 发生序列）：一次刷新内每个循环规则只
     /// 展开一次，列表行与今日/明日视图复用，避免重复 `rrule_occurrences`。
     pub(crate) rrule_cache: std::collections::HashMap<String, Vec<i64>>,
+    /// 番茄钟状态缓存：每帧渲染只读这一份快照，避免每帧多次读 `pomo.json`。
+    pub(crate) pomo: PomoState,
+    /// 上次读取番茄状态的时间戳（毫秒），用于按 TTL 限频重读。
+    pub(crate) pomo_loaded_ms: i64,
 }
 
 impl<'a> App<'a> {
@@ -280,6 +293,8 @@ impl<'a> App<'a> {
             notified_events: std::collections::HashSet::new(),
             counts: [0; 12],
             rrule_cache: std::collections::HashMap::new(),
+            pomo: crate::repo::pomodoro::get_state().unwrap_or_default(),
+            pomo_loaded_ms: 0,
         };
         app.refresh()?;
 
@@ -379,6 +394,17 @@ impl<'a> App<'a> {
         }
     }
 
+    /// 按需刷新番茄钟状态快照（每 ~500ms 至多重读一次 `pomo.json`），供渲染帧内
+    /// 复用，避免每帧多次磁盘读 + JSON 解析。
+    pub(crate) fn refresh_pomo(&mut self) {
+        let now = crate::time::now_ms();
+        if now - self.pomo_loaded_ms < 500 {
+            return;
+        }
+        self.pomo_loaded_ms = now;
+        self.pomo = crate::repo::pomodoro::get_state().unwrap_or_default();
+    }
+
     pub(crate) fn set_mode(&mut self, new_mode: Mode) {
         let old_mode = self.mode;
         self.mode = new_mode;
@@ -388,31 +414,36 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn switch_to_english_ime(&self) {
-        // Try fcitx5-remote
-        if std::process::Command::new("fcitx5-remote")
-            .arg("-c")
-            .status()
-            .is_ok()
-        {
-            return;
+        // 探测结果缓存于 OnceLock：仅首次按 PATH 检测（不 spawn 进程），之后每次
+        // 切换只执行命中的那一个 helper，避免反复 spawn 多个外部进程去探测。
+        static DETECTED: std::sync::OnceLock<Option<&'static str>> = std::sync::OnceLock::new();
+        let helper = *DETECTED.get_or_init(|| {
+            ["fcitx5-remote", "fcitx-remote"]
+                .into_iter()
+                .find(|n| command_in_path(n))
+                .or_else(|| {
+                    ["ibus", "im-select"]
+                        .into_iter()
+                        .find(|n| command_in_path(n))
+                })
+        });
+        match helper {
+            Some(cmd @ ("fcitx5-remote" | "fcitx-remote")) => {
+                let _ = std::process::Command::new(cmd).arg("-c").status();
+            }
+            Some("ibus") => {
+                let _ = std::process::Command::new("ibus")
+                    .args(["engine", "xkb:us::eng"])
+                    .status();
+            }
+            Some("im-select") => {
+                let _ = std::process::Command::new("im-select")
+                    .arg("com.apple.keylayout.ABC")
+                    .status();
+                let _ = std::process::Command::new("im-select").arg("1033").status();
+            }
+            _ => {}
         }
-        // Try fcitx-remote
-        if std::process::Command::new("fcitx-remote")
-            .arg("-c")
-            .status()
-            .is_ok()
-        {
-            return;
-        }
-        // Try ibus
-        let _ = std::process::Command::new("ibus")
-            .args(["engine", "xkb:us::eng"])
-            .status();
-        // Try im-select (macOS / Windows / Cross-platform helper if installed)
-        let _ = std::process::Command::new("im-select")
-            .arg("com.apple.keylayout.ABC")
-            .status();
-        let _ = std::process::Command::new("im-select").arg("1033").status();
     }
 
     pub(crate) fn update_visual_selection(&mut self) {

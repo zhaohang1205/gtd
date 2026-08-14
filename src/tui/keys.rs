@@ -92,10 +92,7 @@ pub(crate) struct Ctx {
 }
 
 pub(crate) fn ctx_of(app: &super::App) -> Ctx {
-    let pomo_active = match crate::repo::pomodoro::get_state() {
-        Ok(s) => s.phase != crate::model::pomodoro::Phase::Idle,
-        Err(_) => false,
-    };
+    let pomo_active = app.pomo.phase != crate::model::pomodoro::Phase::Idle;
     Ctx {
         view: app.view,
         mode: app.mode,

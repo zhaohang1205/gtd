@@ -36,16 +36,15 @@ pub fn run(
         println!("(no tasks)");
         return Ok(());
     }
+    // 一次批量取所有行的标签，避免逐行 `get_task_tags`（N+1）。
+    let ids: Vec<&str> = tasks_vec.iter().map(|t| t.id.as_str()).collect();
+    let tag_map = tags::get_tags_for_tasks(conn, &ids)?;
     println!(
         "{:<8} {:<9} {:<17} {:<22} TITLE",
         "ID", "STATUS", "DUE", "TAGS"
     );
     for t in &tasks_vec {
-        let tags_s = tags::get_task_tags(conn, &t.id)?
-            .iter()
-            .map(|x| x.name.as_str())
-            .collect::<Vec<_>>()
-            .join(",");
+        let tags_s = tag_map.get(&t.id).map(|v| v.join(",")).unwrap_or_default();
         println!(
             "{:<8} {:<9} {:<17} {:<22} {}",
             &t.id[..8],
