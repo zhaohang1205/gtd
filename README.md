@@ -74,9 +74,9 @@ id-prefix, or an exact title.
 | `/` | 全局搜索 · global search |
 | `f` | 情境过滤 · tag filter |
 | `a` | 快速捕获 · quick capture |
-| `Enter` | 理清/标记下一步 · clarify / next |
+| `Enter` | 组织/编辑：一句话补全 @标签 ~时间 *周期 · organize/edit (@tags ~time *rrule) |
 | `x` / `w` / `s` | 已完成 / 等待中 / 将来也许 · done / waiting / someday |
-| `c` / `C` | 日历排期 / 新增检查单 · schedule / add checklist item |
+| `C` | 新增检查单 · add checklist item |
 | `Space` | 勾选检查单 / 继续番茄 · tick / continue pomodoro |
 | `e` / `d` / `L` / `W` | 编辑标题 / 截止 / 循环 / 委派 · edit title/due/rrule/delegated |
 | `n` | 编辑长备注（`$EDITOR`）· edit notes |
@@ -92,14 +92,19 @@ id-prefix, or an exact title.
 
 ```
 now  +2h  +30m  +1d  +1w          相对偏移 / relative offsets
-today / tomorrow [HH:MM]
++3d 15:30                         相对偏移 + 时刻 / offset + clock
+今天 / 明天 / 后天 [HH:MM]         中文天词 / Chinese day words
+周三 / 下周五 [HH:MM]              星期几（可带"下周"）/ weekday (+next week)
+8/20 15:30 · 2026.8.20            斜杠/点日期 / slash & dot dates
 HH:MM                             当日时刻（已过则视为明日）/ same-day time
 2026-07-24 [HH:MM]                绝对日期时间 / absolute date & time
 ```
 
-循环 RRULE（排期提示中在 `;` 后输入）：`FREQ=DAILY|WEEKLY|MONTHLY`、`INTERVAL=2`、
+一句话里的 `~time` 设**排程起点**（`scheduled_start_at`，状态进入已排程，只设起点不设终点）；`d` 键/`--due` 设软截止（`due_at`）。
+
+循环 RRULE（一句话里 `*` 简写）：`FREQ=DAILY|WEEKLY|MONTHLY`、`INTERVAL=2`、
 `BYDAY=SA,SU`、`COUNT=10` / `UNTIL=YYYY-MM-DD`。
-快速简写：`*2w[1,3]`（每两周周一、周三，1-7=周一至周日，0=周日），优先级 `!a`/`!b`/`!c`。
+快速简写：`*d`/`*w`/`*m`/`*y`（每天/周/月/年）、`*2w[1,3]`（每两周周一、周三，1-7=周一至周日，0=周日），优先级 `!a`/`!b`/`!c`。
 
 ## 开发 / Development
 

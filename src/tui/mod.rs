@@ -1,5 +1,4 @@
 pub mod app;
-pub mod calendar;
 pub mod handlers;
 pub mod keys;
 pub mod render;
@@ -293,7 +292,8 @@ mod tests {
         app.handle_key(key('l')).unwrap();
         assert!(app.pane == Pane::Center, "l 把焦点移回中栏");
 
-        // 4) 收集后自动跳回 Inbox
+        // 4) 收集后自动跳回 Inbox（a 在非 Inbox 选择上 = 新建捕获）
+        app.handle_key(key('2')).unwrap(); // Next 视图
         app.handle_key(key('a')).unwrap();
         let s = norm(&frame("6-capture-mode", &mut term, &mut app, &mut out));
         assert!(s.contains("快速录入"), "收集提示");
@@ -305,18 +305,26 @@ mod tests {
         assert!(s.contains("Buymilk"), "新收集的任务出现");
         assert!(s.contains("·收件箱"), "收集后跳到 Inbox");
 
-        // 5) 回车 -> next 触发计划钩子（缺时间则询问时间）
+        // 5) 回车 -> 组织/编辑模式：一句话补全 @标签 ~时间 *周期
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        let s = norm(&frame("8-plan-time", &mut term, &mut app, &mut out));
-        assert!(s.contains("预计时间"), "计划钩子询问时间");
-        // 跳过时间 -> 回到正常；被计划的任务已是 next（已离开 inbox）
+        let s = norm(&frame("8-organize", &mut term, &mut app, &mut out));
+        assert!(s.contains("组织"), "回车进入组织/编辑模式");
+        // 预填了当前标题，追加单个 token 时间后确认
+        for c in " ~tomorrow".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
-        frame("9-after-plan", &mut term, &mut app, &mut out);
-        assert!(app.mode == Mode::Normal, "计划钩子结束");
-        let in_next = tasks::list(
+        frame("9-after-organize", &mut term, &mut app, &mut out);
+        assert!(app.mode == Mode::Normal, "组织完成回到正常模式");
+        assert!(
+            app.status_message.contains("已组织"),
+            "显示组织状态消息，实际: {}",
+            app.status_message
+        );
+        let in_scheduled = tasks::list(
             &conn,
             &ListFilter {
-                status: Some(task::Status::Next),
+                status: Some(task::Status::Scheduled),
                 tags: vec![],
                 query: None,
                 review_stale: false,
@@ -325,7 +333,7 @@ mod tests {
         .unwrap()
         .iter()
         .any(|t| t.title == "Write homepage copy");
-        assert!(in_next, "被计划的任务已进入 next");
+        assert!(in_scheduled, "补上时间后按逻辑自动归类为 Scheduled");
 
         // 6) 用数字键切换视图
         for (d, lbl, expect) in [
@@ -358,7 +366,7 @@ mod tests {
         assert!(s.contains("·收件箱"), "从 waiting 视图收集后跳到 Inbox");
         assert!(s.contains("Capturedfromwaiting"));
 
-        // 9) 标签 + 排程流程
+        // 9) 标签 + 一句话排程
         app.handle_key(key('t')).unwrap();
         for c in "urgent".chars() {
             app.handle_key(key(c)).unwrap();
@@ -366,9 +374,12 @@ mod tests {
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let s = norm(&frame("20-after-tag", &mut term, &mut app, &mut out));
         assert!(s.contains("urgent"), "标签已添加");
-        app.handle_key(key('c')).unwrap();
-        app.handle_key(kc(KeyCode::Enter)).unwrap();
-        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        app.handle_key(kc(KeyCode::Enter)).unwrap(); // 组织编辑器
+        let s = norm(&frame("20b-organize", &mut term, &mut app, &mut out));
+        assert!(s.contains("组织"), "回车进入一句话编辑器");
+        for c in " ~tomorrow 15:30".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
         app.handle_key(kc(KeyCode::Enter)).unwrap();
         let sched_id = tasks::list(
             &conn,
@@ -386,8 +397,19 @@ mod tests {
         .expect("urgent 任务已打标签");
         let s = norm(&frame("21-after-schedule", &mut term, &mut app, &mut out));
         assert!(
-            s.contains(&format!("已排程{}", &sched_id[..8])),
-            "显示排程状态消息"
+            s.contains(&format!("已组织{}", &sched_id[..8])),
+            "显示组织状态消息"
+        );
+        let st = tasks::get(&conn, &sched_id).unwrap();
+        assert_eq!(
+            st.status,
+            task::Status::Scheduled,
+            "一句话排程后进入 Scheduled"
+        );
+        assert_eq!(
+            crate::time::format_local(st.scheduled_start_at),
+            crate::time::format_local(Some(crate::time::parse_time("tomorrow 15:30").unwrap())),
+            "排程起点 = 明天 15:30"
         );
 
         // 10) 归档(需确认) + 帮助切换 + 退出
@@ -629,6 +651,156 @@ mod tests {
     }
 
     #[test]
+    fn enter_opens_organize_on_scheduled() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "scheduled-task".into(),
+                status: task::Status::Inbox,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(
+            &conn,
+            &rec.id,
+            crate::time::parse_time("tomorrow 10:00").unwrap(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.handle_key(key('4')).unwrap(); // Scheduled 视图
+        let row = app
+            .items
+            .iter()
+            .find(|r| r.title == "scheduled-task")
+            .expect("Scheduled 视图含该任务");
+        assert_eq!(row.status, task::Status::Scheduled.to_string());
+
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        assert_eq!(
+            app.mode,
+            Mode::Capturing,
+            "Enter 进入与 capture 同源的一句话编辑器"
+        );
+        assert_eq!(
+            app.organizing_id.as_deref(),
+            Some(rec.id.as_str()),
+            "记录待编辑任务"
+        );
+        assert!(
+            app.input.contains("scheduled-task"),
+            "预填当前标题: {}",
+            app.input
+        );
+        let t = tasks::get(&conn, &rec.id).unwrap();
+        assert_eq!(t.status, task::Status::Scheduled, "编辑不改变状态");
+        assert_eq!(t.due_at, None, "排程任务无 due，序列化不出现 ~时间");
+
+        // Esc 取消编辑，状态不变
+        app.handle_key(kc(KeyCode::Esc)).unwrap();
+        assert_eq!(app.mode, Mode::Normal, "Esc 退出编辑模式");
+        assert_eq!(app.organizing_id, None);
+        let t = tasks::get(&conn, &rec.id).unwrap();
+        assert_eq!(t.status, task::Status::Scheduled);
+    }
+
+    #[test]
+    fn a_edits_selected_inbox_task() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "滞留任务".into(),
+                status: task::Status::Inbox,
+                tag_names: vec!["health".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        // Inbox 视图选中该任务，按 a = 与 capture 同一入口再编辑
+        app.handle_key(key('a')).unwrap();
+        assert_eq!(app.mode, Mode::Capturing, "a 打开同一句话编辑器");
+        assert_eq!(app.organizing_id.as_deref(), Some(rec.id.as_str()));
+        assert!(
+            app.input.contains("滞留任务") && app.input.contains("@health"),
+            "预填标题与标签: {}",
+            app.input
+        );
+
+        app.input.clear();
+        for c in "滞留任务 @work ~tomorrow *d".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, Mode::Normal);
+        assert_eq!(app.organizing_id, None, "编辑后清除标记");
+
+        let t = tasks::get(&conn, &rec.id).unwrap();
+        assert_eq!(t.status, task::Status::Scheduled, "Inbox 补时间后自动归类");
+        assert_eq!(t.rrule.as_deref(), Some("FREQ=DAILY"));
+        let tags = crate::repo::tags::get_task_tags(&conn, &rec.id).unwrap();
+        let names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names, vec!["work"], "标签被替换");
+    }
+
+    #[test]
+    fn organize_edit_sets_time_tags_rrule() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "跑3公里".into(),
+                status: task::Status::Inbox,
+                tag_names: vec!["health".to_string()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, Mode::Capturing);
+        assert!(app.input.contains("@health"), "预填已有标签: {}", app.input);
+
+        // 直接替换为完整一句话：标题 + @标签 + ~时间 + *周期
+        app.input.clear();
+        for c in "跑5公里 @home ~tomorrow *d".chars() {
+            app.handle_key(key(c)).unwrap();
+        }
+        app.handle_key(kc(KeyCode::Enter)).unwrap();
+        assert_eq!(app.mode, Mode::Normal);
+
+        let t = tasks::get(&conn, &rec.id).unwrap();
+        assert_eq!(t.title, "跑5公里", "标题已更新");
+        assert_eq!(t.status, task::Status::Scheduled, "Inbox 补时间后自动归类");
+        assert_eq!(t.rrule.as_deref(), Some("FREQ=DAILY"), "周期已设置");
+        assert_eq!(
+            crate::time::format_local(t.scheduled_start_at),
+            crate::time::format_local(Some(crate::time::parse_time("tomorrow").unwrap())),
+            "排程起点已设置"
+        );
+        let tags = crate::repo::tags::get_task_tags(&conn, &rec.id).unwrap();
+        let names: Vec<String> = tags.iter().map(|t| t.name.clone()).collect();
+        assert_eq!(names, vec!["home"], "标签被替换为 @home");
+    }
+
+    #[test]
     fn missed_habit_shows_overdue_in_today_view() {
         crate::repo::pomodoro::set_pomo_idle_for_tests();
         let mut conn = Connection::open(":memory:").unwrap();
@@ -668,6 +840,106 @@ mod tests {
         term.draw(|f| app.render(f)).unwrap();
         let s = norm(&snap(&term));
         assert!(s.contains("逾期"), "列表行显示逾期措辞");
+    }
+
+    #[test]
+    fn detail_planned_shows_next_occurrence_for_habit() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        // 锚点在 3 天前（已错过），FREQ=DAILY → 最近计划执行 = 今天的同一时刻
+        let anchor = crate::time::local_day_bounds(-3).0 + 60_000;
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "habit-detail".into(),
+                status: task::Status::Scheduled,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(&conn, &rec.id, anchor, None, Some("FREQ=DAILY".into())).unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.popup = None;
+        app.handle_key(key('4')).unwrap(); // Scheduled 视图
+        let idx = app
+            .items
+            .iter()
+            .position(|r| r.title == "habit-detail")
+            .expect("Scheduled 视图含该习惯");
+        app.selected = idx;
+        app.load_detail();
+
+        let mut term = Terminal::new(TestBackend::new(110, 30)).unwrap();
+        term.draw(|f| app.render(f)).unwrap();
+        let s = norm(&snap(&term));
+
+        let task = tasks::get(&conn, &rec.id).unwrap();
+        let next = crate::commands::effective_due(&task).unwrap();
+        let next_str = norm(&crate::time::format_local(Some(next)));
+        let anchor_str = norm(&crate::time::format_local(Some(anchor)));
+        assert!(
+            next > anchor,
+            "最近计划执行应晚于原始锚点: anchor={anchor_str}, next={next_str}"
+        );
+        assert!(
+            s.contains(&next_str),
+            "详情「计划」应显示最近计划执行日期 {next_str}，实际帧:\n{s}"
+        );
+        assert!(
+            !s.contains(&anchor_str),
+            "详情「计划」不应显示过期的原始锚点 {anchor_str}"
+        );
+    }
+
+    #[test]
+    fn x_does_not_double_check_in_habit() {
+        crate::repo::pomodoro::set_pomo_idle_for_tests();
+        let mut conn = Connection::open(":memory:").unwrap();
+        migrate::run(&mut conn).unwrap();
+
+        let rec = tasks::create_capture(
+            &conn,
+            &CaptureInput {
+                title: "daily-habit".into(),
+                status: task::Status::Scheduled,
+                tag_names: vec![],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        tasks::schedule(
+            &conn,
+            &rec.id,
+            crate::time::parse_time("today 09:00").unwrap(),
+            None,
+            Some("FREQ=DAILY".into()),
+        )
+        .unwrap();
+        tasks::transition(&conn, &rec.id, task::Status::Done).unwrap();
+
+        let mut app = App::new(&conn).unwrap();
+        app.handle_key(key('4')).unwrap(); // Scheduled 视图
+        let row = app
+            .items
+            .iter()
+            .find(|r| r.title == "daily-habit")
+            .expect("Scheduled 视图含该习惯");
+        assert!(row.checked_in_today, "今日已打卡");
+
+        app.handle_key(key('x')).unwrap();
+        let t = tasks::get(&conn, &rec.id).unwrap();
+        assert_eq!(t.status, task::Status::Scheduled, "同日二次 x 不应改变状态");
+        assert!(
+            app.status_message.contains("今日已打卡"),
+            "应提示已打卡，实际: {}",
+            app.status_message
+        );
+        assert!(!app.should_quit, "TUI 不因拒绝打卡而退出");
+        assert_eq!(app.mode, Mode::Normal);
     }
 
     #[test]

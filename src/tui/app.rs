@@ -9,8 +9,6 @@ use crate::model::task::{self, Task};
 use crate::repo::tags;
 use crate::repo::tasks::{self, ListFilter};
 
-use super::calendar;
-
 pub(crate) fn visual_len(s: &str) -> usize {
     s.chars()
         .map(|c| {
@@ -121,13 +119,9 @@ pub(crate) enum Mode {
     EditingTitle,
     Capturing,
     Tagging,
-    SchedulingCalendar,
-    SchedulingTimeRRule,
     WaitingWho,
     WaitingWhen,
     Search,
-    /// 计划钩子第 2 步：询问预计时间。
-    PlanningTime,
     ChecklistAdding,
     Visual,
     FilteringTag,
@@ -202,6 +196,8 @@ pub(crate) struct App<'a> {
     pub(crate) mode: Mode,
     pub(crate) pane: Pane,
     pub(crate) input: String,
+    /// 组织/编辑模式正在编辑的任务 id。
+    pub(crate) organizing_id: Option<String>,
     pub(crate) status_message: String,
     pub(crate) lang: crate::i18n::Lang,
     pub(crate) show_help: bool,
@@ -209,8 +205,6 @@ pub(crate) struct App<'a> {
     pub(crate) show_shortcut_bar: bool,
     pub(crate) help_scroll: usize,
     pub(crate) should_quit: bool,
-    pub(crate) calendar: calendar::CalendarState,
-    pub(crate) sched_dates: Option<(chrono::NaiveDate, chrono::NaiveDate)>,
     pub(crate) search_query: String,
     pub(crate) tag_filter: Option<String>,
     pub(crate) visual_start_idx: Option<usize>,
@@ -258,6 +252,7 @@ impl<'a> App<'a> {
             mode: Mode::Normal,
             pane: Pane::Left,
             input: String::new(),
+            organizing_id: None,
             status_message: crate::tr!(lang, "按 '?' 或 F1 查看帮助", "Press '?' or F1 for help")
                 .to_string(),
             lang,
@@ -266,8 +261,6 @@ impl<'a> App<'a> {
             show_shortcut_bar: true,
             help_scroll: 0,
             should_quit: false,
-            calendar: calendar::CalendarState::new(),
-            sched_dates: None,
             search_query: String::new(),
             tag_filter: None,
             visual_start_idx: None,
@@ -733,27 +726,61 @@ impl<'a> App<'a> {
         self.set_view(views[next_idx as usize]);
     }
 
-    pub(crate) fn needs_time(t: &Task) -> bool {
-        t.due_at.is_none() && t.scheduled_start_at.is_none()
-    }
-
-    pub(crate) fn act_next(&mut self, row: Row) -> Result<()> {
-        let t = tasks::transition(self.conn, &row.id, task::Status::Next)?;
-        self.status_message = crate::tr!(self.lang, "{} -> 下一步", "{} -> next", &t.id[..8]);
-        if Self::needs_time(&t) {
-            self.set_mode(Mode::PlanningTime);
-            self.input.clear();
+    /// 回车进入组织/编辑模式：与 capture 同一个一句话编辑器，预填当前任务内容。
+    pub(crate) fn open_organize(&mut self) -> Result<()> {
+        if self.mode == Mode::Visual {
+            self.set_mode(Mode::Normal);
+            self.selected_ids.clear();
+            self.visual_start_idx = None;
             self.status_message = crate::tr!(
                 self.lang,
-                "{} 预计开始/截止? (空/Esc 跳过)",
-                "{} start/due? (empty/Esc to skip)",
-                &t.id[..8]
-            );
-        } else {
-            self.refresh()?;
-            self.load_detail();
+                "可视模式不支持编辑",
+                "editing unavailable in visual mode"
+            )
+            .into();
+            return Ok(());
         }
+        if matches!(self.view, View::Tags | View::Archived) {
+            return Ok(());
+        }
+        let Some(row) = self.items.get(self.selected).cloned() else {
+            return Ok(());
+        };
+        let Ok(task) = tasks::get(self.conn, &row.id) else {
+            return Ok(());
+        };
+        self.organizing_id = Some(task.id.clone());
+        self.input = self.task_to_quick_add(&task);
+        self.set_mode(Mode::Capturing);
+        self.status_message = crate::tr!(
+            self.lang,
+            "组织: 编辑 @标签 ~时间 *周期 (空/Esc 跳过)",
+            "organize: edit @tags ~time *rrule (empty/Esc to skip)"
+        )
+        .into();
         Ok(())
+    }
+
+    /// 把任务序列化成 quick-add 一句话（标题 @标签 ~时间 *周期），可解析回原字段。
+    pub(crate) fn task_to_quick_add(&self, task: &Task) -> String {
+        let row = crate::tui::row_from(task, 0, self.conn)
+            .unwrap_or_else(|_| crate::tui::row_from_tags(task, 0, Vec::new()));
+        let mut s = task.title.clone();
+        for tag in &row.tags {
+            s.push(' ');
+            s.push('@');
+            s.push_str(tag);
+        }
+        if let Some(start) = task.scheduled_start_at {
+            s.push_str(" ~");
+            s.push_str(&crate::time::format_quick_time(start));
+        }
+        if let Some(rr) = &task.rrule {
+            s.push(' ');
+            s.push('*');
+            s.push_str(rr);
+        }
+        s
     }
 
     pub(crate) fn act_on_selected(&mut self, to: task::Status) -> Result<()> {
@@ -780,33 +807,51 @@ impl<'a> App<'a> {
                     );
                     return Ok(());
                 }
-                if to == task::Status::Next {
-                    let row = crate::tui::row_from(&task, 0, self.conn)?;
-                    return self.act_next(row);
-                }
-                // 如果当前变动状态的任务正处于 Pomodoro 专注中，且新状态为 Done/Waiting，终止番茄钟
-                if let Ok(pomo) = crate::repo::pomodoro::get_state() {
-                    if pomo.task_id.as_deref() == Some(id)
-                        && matches!(
-                            to,
-                            task::Status::Done | task::Status::Waiting | task::Status::Someday
-                        )
-                    {
-                        let _ = crate::commands::pomo::stop();
+                // 习惯打卡一天一次：今日已打过卡则只提示，不重复推进排程。
+                let already_checked_in = to == task::Status::Done
+                    && task.rrule.is_some()
+                    && crate::repo::tasks::checked_in_today(
+                        self.conn,
+                        crate::time::local_day_bounds(0).0,
+                    )
+                    .unwrap_or_default()
+                    .iter()
+                    .any(|tid| tid == id);
+                if already_checked_in {
+                    self.status_message = crate::tr!(
+                        self.lang,
+                        "{} 今日已打卡",
+                        "{} already checked in today",
+                        &id[..8]
+                    );
+                } else {
+                    // 如果当前变动状态的任务正处于 Pomodoro 专注中，且新状态为 Done/Waiting，终止番茄钟
+                    if let Ok(pomo) = crate::repo::pomodoro::get_state() {
+                        if pomo.task_id.as_deref() == Some(id)
+                            && matches!(
+                                to,
+                                task::Status::Done | task::Status::Waiting | task::Status::Someday
+                            )
+                        {
+                            let _ = crate::commands::pomo::stop();
+                        }
                     }
+                    let t = tasks::transition(self.conn, id, to)?;
+                    self.status_message = format!(
+                        "{} -> {}",
+                        &t.id[..8],
+                        crate::tui::status_cn(self.lang, t.status)
+                    );
                 }
-                let t = tasks::transition(self.conn, id, to)?;
-                self.status_message = format!(
-                    "{} -> {}",
-                    &t.id[..8],
-                    crate::tui::status_cn(self.lang, t.status)
-                );
             }
         } else {
             let mut count = 0;
             for id in &ids {
                 if let Ok(task) = tasks::get(self.conn, id) {
-                    if task.status != to && tasks::transition(self.conn, id, to).is_ok() {
+                    if task.status != to
+                        && task.status != task::Status::Scheduled
+                        && tasks::transition(self.conn, id, to).is_ok()
+                    {
                         count += 1;
                         if let Ok(pomo) = crate::repo::pomodoro::get_state() {
                             if pomo.task_id.as_deref() == Some(id)

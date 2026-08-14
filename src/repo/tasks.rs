@@ -155,6 +155,17 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
         t.clarified_at = Some(now);
     }
 
+    // 循环习惯一天只允许打卡一次（防止把排程再次推进/重复记录打卡）。
+    if to_status == task::Status::Done && t.rrule.is_some() {
+        let today_start = time::local_day_bounds(0).0;
+        if checked_in_today(conn, today_start)?
+            .iter()
+            .any(|tid| tid == id)
+        {
+            return Err(Error::AlreadyCheckedInToday(id.to_string()).into());
+        }
+    }
+
     let tx = conn.unchecked_transaction()?;
 
     if to_status == task::Status::Done {
@@ -760,5 +771,52 @@ mod tests {
         .unwrap();
         let eff = crate::commands::effective_due(&t);
         assert_eq!(eff, Some(anchor), "错过 slot 即逾期，返回该 slot");
+    }
+
+    #[test]
+    fn habit_rejects_second_checkin_same_day() {
+        let (_dir, conn) = test_conn();
+
+        let habit = create_capture(
+            &conn,
+            &CaptureInput {
+                title: "晨跑".into(),
+                status: task::Status::Scheduled,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        schedule(
+            &conn,
+            &habit.id,
+            time::now_ms(),
+            None,
+            Some("FREQ=DAILY".into()),
+        )
+        .unwrap();
+
+        transition(&conn, &habit.id, task::Status::Done).unwrap();
+        assert!(
+            checked_in_today(&conn, time::local_day_bounds(0).0)
+                .unwrap()
+                .contains(&habit.id),
+            "第一次打卡被记录"
+        );
+
+        let err = transition(&conn, &habit.id, task::Status::Done).unwrap_err();
+        assert!(
+            matches!(
+                err.downcast_ref::<Error>(),
+                Some(Error::AlreadyCheckedInToday(_))
+            ),
+            "同日第二次打卡应被拒绝，实际: {err}"
+        );
+
+        let habit_events = events(&conn, &habit.id)
+            .unwrap()
+            .iter()
+            .filter(|e| e.event_type == event::EV_HABIT_COMPLETED)
+            .count();
+        assert_eq!(habit_events, 1, "不重复记录打卡事件");
     }
 }

@@ -252,7 +252,6 @@ impl<'a> AppRender for App<'a> {
         );
 
         if self.mode != Mode::Normal
-            && self.mode != Mode::SchedulingCalendar
             && self.mode != Mode::ConfirmArchive
             && self.mode != Mode::ConfirmPurge
         {
@@ -265,22 +264,26 @@ impl<'a> AppRender for App<'a> {
                     )
                 }
                 Mode::EditingTitle => crate::tr!(self.lang, " 编辑标题 ", " Edit title "),
-                Mode::Capturing => crate::tr!(
-                    self.lang,
-                    " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
-                    " Quick capture (@tag, Tab to complete: home, work, errands, quick, focus...) "
-                ),
+                Mode::Capturing => {
+                    if self.organizing_id.is_some() {
+                        crate::tr!(
+                            self.lang,
+                            " 组织: 编辑 标题 @标签 ~时间 *周期 (空/Esc 跳过) ",
+                            " Organize: edit title @tags ~time *rrule (empty/Esc to skip) "
+                        )
+                    } else {
+                        crate::tr!(
+                            self.lang,
+                            " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
+                            " Quick capture (@tag, Tab to complete: home, work, errands, quick, focus...) "
+                        )
+                    }
+                }
                 Mode::Tagging => crate::tr!(
                     self.lang,
                     " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) ",
                     " Add tags [Tab to complete] (presets: home, work, errands, quick, focus...) "
                 ),
-                Mode::SchedulingTimeRRule => crate::tr!(
-                    self.lang,
-                    " 设定时间与循环规则 (格式: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) ",
-                    " Set time & rrule (format: 15:00-16:00 ;FREQ=WEEKLY;BYDAY=SA,SU) "
-                ),
-                Mode::SchedulingCalendar => "", // Not reached
                 Mode::WaitingWho => {
                     crate::tr!(self.lang, " 等待谁/什么? ", " Waiting for who/what? ")
                 }
@@ -289,7 +292,6 @@ impl<'a> AppRender for App<'a> {
                     " 提醒时间? (如 +1d, tomorrow 10:00) ",
                     " Reminder time? (e.g. +1d, tomorrow 10:00) "
                 ),
-                Mode::PlanningTime => crate::tr!(self.lang, " 预计时间? ", " Time? "),
                 Mode::ChecklistAdding => {
                     crate::tr!(self.lang, " 新增检查单 ", " Add checklist item ")
                 }
@@ -470,14 +472,9 @@ impl<'a> AppRender for App<'a> {
                 f.render_widget(Paragraph::new(text_lines).block(block), area);
             }
         }
-        if self.mode == Mode::SchedulingCalendar {
-            let area = self.centered_rect(60, 15, size);
-            self.calendar.render(f, area, self.lang);
-        }
-
         if self.show_syntax {
             // 当 show_syntax 为 true 时，如果处于输入/编辑模式，则将语法面板放右半屏实现“左右双开”；否则居中
-            let syntax_area = if self.mode.is_input() || self.mode == Mode::SchedulingCalendar {
+            let syntax_area = if self.mode.is_input() {
                 Rect {
                     x: size.width * 50 / 100,
                     y: size.height / 10,
@@ -939,8 +936,8 @@ impl<'a> AppRender for App<'a> {
             Line::from(Span::styled(
                 crate::tr!(
                     self.lang,
-                    "时间语法 (~ 与排期 c)",
-                    "Time syntax (~ and schedule c)"
+                    "时间语法 (~ 排程起点)",
+                    "Time syntax (~ schedule start)"
                 ),
                 Style::default()
                     .fg(self.theme.accent)
@@ -1003,17 +1000,16 @@ impl<'a> AppRender for App<'a> {
                     .add_modifier(Modifier::BOLD),
             )),
             Line::from(vec![
-                Span::raw(crate::tr!(self.lang, "  先按 ", "  press ")),
-                Span::styled(
-                    "c",
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
                 Span::raw(crate::tr!(
                     self.lang,
-                    " 选排期日期, 再在 '时间;规则' 中输入 RRULE 即成为循环任务",
-                    " to schedule a date, then add RRULE in 'time;rule'"
+                    "  一句话排程: ",
+                    "  one-line schedule: "
+                )),
+                Span::styled("~明天 15:30", Style::default().fg(Color::Cyan)),
+                Span::raw(crate::tr!(
+                    self.lang,
+                    " 即可设排程起点, 循环任务再补 *rrule",
+                    " sets the start time; append *rrule for habits"
                 )),
             ]),
             Line::from(vec![
@@ -1492,18 +1488,34 @@ impl<'a> AppRender for App<'a> {
                     Span::raw(time::format_local(d.task.due_at)),
                 ]));
 
-                // 计划时间
-                if d.task.scheduled_start_at.is_some() || d.task.scheduled_end_at.is_some() {
+                // 计划时间：具体时间显示排程起点；循环任务显示最近一次计划执行日期
+                if d.task.scheduled_start_at.is_some()
+                    || d.task.scheduled_end_at.is_some()
+                    || (d.task.rrule.is_some()
+                        && (d.task.scheduled_start_at.is_some() || d.task.due_at.is_some()))
+                {
+                    let planned = if d.task.rrule.is_some() {
+                        // 循环任务：错过 slot 取最近一次已错过（逾期），否则下一次执行
+                        match crate::commands::effective_due(&d.task) {
+                            Some(ms) => time::format_local(Some(ms)),
+                            None => "-".to_string(),
+                        }
+                    } else {
+                        match d.task.scheduled_end_at {
+                            Some(_) => format!(
+                                "{} -> {}",
+                                time::format_local(d.task.scheduled_start_at),
+                                time::format_local(d.task.scheduled_end_at)
+                            ),
+                            None => time::format_local(d.task.scheduled_start_at),
+                        }
+                    };
                     lines.push(Line::from(vec![
                         Span::styled(
                             crate::tr!(self.lang, "计划: ", "Planned: "),
                             Style::default().fg(self.theme.text_dim),
                         ),
-                        Span::raw(format!(
-                            "{} -> {}",
-                            time::format_local(d.task.scheduled_start_at),
-                            time::format_local(d.task.scheduled_end_at)
-                        )),
+                        Span::raw(planned),
                     ]));
                 }
 

@@ -37,6 +37,18 @@ pub fn format_local(ms: Option<i64>) -> String {
     }
 }
 
+/// Format a UTC-ms timestamp as a single whitespace-free token for the quick-add
+/// grammar (`~YYYY-MM-DDTHH:MM`), so `parse_time` can round-trip it back exactly.
+pub fn format_quick_time(ms: i64) -> String {
+    match Utc.timestamp_millis_opt(ms).single() {
+        Some(dt) => dt
+            .with_timezone(&Local)
+            .format("%Y-%m-%dT%H:%M")
+            .to_string(),
+        None => ms.to_string(),
+    }
+}
+
 fn local_to_utc_ms(nd: NaiveDateTime) -> Result<i64> {
     let local_dt = match Local.from_local_datetime(&nd) {
         LocalResult::Single(dt) => dt,
@@ -147,13 +159,15 @@ pub fn is_overdue(ms: Option<i64>) -> bool {
 pub fn parse_time(s: &str) -> Result<i64> {
     let s = s.trim();
     let now = Local::now();
+    let midnight = NaiveTime::from_hms_opt(0, 0, 0).unwrap();
 
     if s == "now" {
         return Ok(now.with_timezone(&Utc).timestamp_millis());
     }
 
+    // 相对偏移（+2h / +3d / +1w），可带时刻：+3d 15:30 → 3 天后的 15:30。
     if let Some(rest) = s.strip_prefix('+') {
-        let (num, unit) = split_number_unit(rest)?;
+        let (num, unit, after_unit) = split_number_unit(rest)?;
         let dur = match unit {
             'h' => Duration::hours(num),
             'm' => Duration::minutes(num),
@@ -166,17 +180,58 @@ pub fn parse_time(s: &str) -> Result<i64> {
                 ))
             }
         };
-        return Ok((now + dur).with_timezone(&Utc).timestamp_millis());
+        let base = now + dur;
+        let after_unit = after_unit.trim();
+        if after_unit.is_empty() {
+            return Ok(base.with_timezone(&Utc).timestamp_millis());
+        }
+        let t = parse_optional_time(after_unit, midnight)?;
+        return local_to_utc_ms(base.date_naive().and_time(t));
     }
 
+    // 中文天词：今天/明天/后天（可带 HH:MM）
+    if let Some(stripped) = s.strip_prefix("今天") {
+        let t = parse_optional_time(stripped.trim(), midnight)?;
+        return local_to_utc_ms(now.date_naive().and_time(t));
+    }
+    if let Some(stripped) = s.strip_prefix("明天") {
+        let t = parse_optional_time(stripped.trim(), midnight)?;
+        let day = (now + Duration::days(1)).date_naive();
+        return local_to_utc_ms(day.and_time(t));
+    }
+    if let Some(stripped) = s.strip_prefix("后天") {
+        let t = parse_optional_time(stripped.trim(), midnight)?;
+        let day = (now + Duration::days(2)).date_naive();
+        return local_to_utc_ms(day.and_time(t));
+    }
+
+    // 星期几：周X / 星期X / 下周X（X ∈ 一~日, 可带 HH:MM）
+    if let Some((wd, time_part, next_week)) = parse_cn_weekday(s) {
+        let t = parse_optional_time(time_part, midnight)?;
+        let today = now.date_naive();
+        let delta = (wd.num_days_from_monday() + 7 - today.weekday().num_days_from_monday()) % 7;
+        let off = (delta as i64) + if next_week { 7 } else { 0 };
+        let day = today + Duration::days(off);
+        return local_to_utc_ms(day.and_time(t));
+    }
+
+    // English today/tomorrow
     if let Some(stripped) = s.strip_prefix("today") {
-        let time = parse_optional_time(stripped.trim(), NaiveTime::from_hms_opt(0, 0, 0).unwrap())?;
+        let time = parse_optional_time(stripped.trim(), midnight)?;
         return local_to_utc_ms(now.date_naive().and_time(time));
     }
     if let Some(stripped) = s.strip_prefix("tomorrow") {
-        let time = parse_optional_time(stripped.trim(), NaiveTime::from_hms_opt(0, 0, 0).unwrap())?;
+        let time = parse_optional_time(stripped.trim(), midnight)?;
         let tomorrow = (now + Duration::days(1)).date_naive();
         return local_to_utc_ms(tomorrow.and_time(time));
+    }
+
+    // 斜杠/点/短横线日期（可带 HH:MM）：2026/8/20、8/20、2026.8.20、8-20
+    if let Some((date_part, time_part)) = split_date_time(s) {
+        if let Some(d) = parse_flex_date(date_part) {
+            let t = parse_optional_time(time_part, midnight)?;
+            return local_to_utc_ms(d.and_time(t));
+        }
     }
 
     // pure time "HH:MM" => today if still upcoming, otherwise tomorrow
@@ -203,7 +258,7 @@ pub fn parse_time(s: &str) -> Result<i64> {
     Err(anyhow!("could not parse time: '{}'", s))
 }
 
-fn split_number_unit(s: &str) -> Result<(i64, char)> {
+fn split_number_unit(s: &str) -> Result<(i64, char, &str)> {
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -219,7 +274,91 @@ fn split_number_unit(s: &str) -> Result<(i64, char)> {
         .chars()
         .next()
         .ok_or_else(|| anyhow!("missing unit in '{}'", s))?;
-    Ok((num, unit))
+    let after = &s[i + unit.len_utf8()..];
+    Ok((num, unit, after))
+}
+
+fn single_weekday_char(c: char) -> Option<chrono::Weekday> {
+    use chrono::Weekday;
+    match c {
+        '一' => Some(Weekday::Mon),
+        '二' => Some(Weekday::Tue),
+        '三' => Some(Weekday::Wed),
+        '四' => Some(Weekday::Thu),
+        '五' => Some(Weekday::Fri),
+        '六' => Some(Weekday::Sat),
+        '日' | '天' => Some(Weekday::Sun),
+        _ => None,
+    }
+}
+
+/// 解析中文星期词，返回 (星期几, 剩余时刻串, 是否下周)。
+/// 支持 周X / 星期X / 下周X，X ∈ 一~日。
+fn parse_cn_weekday(s: &str) -> Option<(chrono::Weekday, &str, bool)> {
+    for (prefix, next_week) in [("下周", true), ("星期", false), ("周", false)] {
+        if let Some(body) = s.strip_prefix(prefix) {
+            let c = body.chars().next()?;
+            let wd = single_weekday_char(c)?;
+            return Some((wd, body[c.len_utf8()..].trim(), next_week));
+        }
+    }
+    None
+}
+
+/// 把 "日期 [HH:MM]" 拆成 (日期部分, 时刻部分)，时刻部分可能为空串。
+fn split_date_time(s: &str) -> Option<(&str, &str)> {
+    if let Some(sp) = s.rfind(' ') {
+        let time = &s[sp + 1..];
+        if time.len() <= 5 && time.contains(':') && !time.contains('-') {
+            let (h, m) = time.split_once(':')?;
+            if !h.is_empty()
+                && !m.is_empty()
+                && h.chars().all(|c| c.is_ascii_digit())
+                && m.chars().all(|c| c.is_ascii_digit())
+                && h.len() <= 2
+                && m.len() == 2
+            {
+                return Some((s[..sp].trim(), time));
+            }
+        }
+    }
+    Some((s.trim(), ""))
+}
+
+/// 灵活分隔日期：YYYY/M/D、M/D、YYYY.M.D、YYYY-M-D、M-D（后两者当年补零即可）。
+fn parse_flex_date(date_part: &str) -> Option<NaiveDate> {
+    let sep = if date_part.contains('/') {
+        '/'
+    } else if date_part.contains('.') {
+        '.'
+    } else if date_part.contains('-') {
+        '-'
+    } else {
+        return None;
+    };
+    let parts: Vec<&str> = date_part.split(sep).collect();
+    if parts.is_empty() || parts.len() > 3 {
+        return None;
+    }
+    let mut nums = Vec::with_capacity(parts.len());
+    for p in &parts {
+        if p.is_empty() {
+            return None;
+        }
+        nums.push(p.parse::<i32>().ok()?);
+    }
+    let today = Local::now().date_naive();
+    match nums.len() {
+        3 => {
+            let (mut y, m, d) = (nums[0], nums[1], nums[2]);
+            if y < 100 {
+                y += 2000;
+            }
+            NaiveDate::from_ymd_opt(y, m as u32, d as u32)
+        }
+        2 => NaiveDate::from_ymd_opt(today.year(), nums[0] as u32, nums[1] as u32),
+        _ => None,
+    }
 }
 
 fn parse_optional_time(s: &str, default: NaiveTime) -> Result<NaiveTime> {
@@ -358,4 +497,82 @@ fn parse_until(v: &str) -> Result<i64> {
         return Ok(Utc.from_utc_datetime(&dt).timestamp_millis());
     }
     Err(anyhow!("invalid RRULE UNTIL: '{}'", v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local_ms(d: NaiveDate, t: NaiveTime) -> i64 {
+        local_to_utc_ms(d.and_time(t)).unwrap()
+    }
+    fn midnight() -> NaiveTime {
+        NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn parse_chinese_day_words() {
+        let today = Local::now().date_naive();
+        assert_eq!(parse_time("今天").unwrap(), local_ms(today, midnight()));
+        assert_eq!(
+            parse_time("明天").unwrap(),
+            local_ms(today + Duration::days(1), midnight())
+        );
+        assert_eq!(
+            parse_time("明天 09:30").unwrap(),
+            local_ms(
+                today + Duration::days(1),
+                NaiveTime::from_hms_opt(9, 30, 0).unwrap()
+            )
+        );
+        assert_eq!(
+            parse_time("后天").unwrap(),
+            local_ms(today + Duration::days(2), midnight())
+        );
+    }
+
+    #[test]
+    fn parse_chinese_weekday() {
+        let today = Local::now().date_naive();
+        let wd = today.weekday();
+        let fri = chrono::Weekday::Fri;
+        let delta = (fri.num_days_from_monday() + 7 - wd.num_days_from_monday()) % 7;
+        let target = today + Duration::days(delta as i64 + 7);
+        assert_eq!(
+            parse_time("下周五 15:00").unwrap(),
+            local_ms(target, NaiveTime::from_hms_opt(15, 0, 0).unwrap())
+        );
+        let wed = chrono::Weekday::Wed;
+        let delta = (wed.num_days_from_monday() + 7 - wd.num_days_from_monday()) % 7;
+        let target = today + Duration::days(delta as i64);
+        assert_eq!(parse_time("周三").unwrap(), local_ms(target, midnight()));
+        assert_eq!(
+            parse_time("星期三 10:00").unwrap(),
+            local_ms(target, NaiveTime::from_hms_opt(10, 0, 0).unwrap())
+        );
+        assert!(parse_time("周日 10:00").is_ok());
+        assert!(parse_time("星期天 10:00").is_ok());
+    }
+
+    #[test]
+    fn parse_slash_dot_dates() {
+        let d = NaiveDate::from_ymd_opt(2026, 8, 20).unwrap();
+        let t = NaiveTime::from_hms_opt(15, 30, 0).unwrap();
+        assert_eq!(parse_time("2026/8/20 15:30").unwrap(), local_ms(d, t));
+        assert_eq!(parse_time("2026.8.20 15:30").unwrap(), local_ms(d, t));
+        assert_eq!(parse_time("2026-08-20 15:30").unwrap(), local_ms(d, t));
+        let now = Local::now();
+        let m_d = NaiveDate::from_ymd_opt(now.year(), 8, 20).unwrap();
+        assert_eq!(parse_time("8/20 15:30").unwrap(), local_ms(m_d, t));
+        assert_eq!(parse_time("8-20 15:30").unwrap(), local_ms(m_d, t));
+    }
+
+    #[test]
+    fn parse_relative_with_clock() {
+        let base = (Local::now() + Duration::days(3)).date_naive();
+        let t = NaiveTime::from_hms_opt(15, 30, 0).unwrap();
+        assert_eq!(parse_time("+3d 15:30").unwrap(), local_ms(base, t));
+        assert!(parse_time("+2h").is_ok());
+        assert!(parse_time("+1d").is_ok());
+    }
 }

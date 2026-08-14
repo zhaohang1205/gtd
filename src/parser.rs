@@ -89,17 +89,31 @@ pub fn tokenize_quick_add(input: &str) -> Vec<QuickAddToken> {
 }
 
 pub fn parse_quick_add(input: &str) -> QuickAdd {
+    let tokens = tokenize_quick_add(input);
     let mut title_parts = Vec::new();
     let mut tags = Vec::new();
     let mut time_str = None;
     let mut rrule = None;
     let mut priority = None;
 
-    for tok in tokenize_quick_add(input) {
+    let mut i = 0;
+    while i < tokens.len() {
+        let tok = &tokens[i];
         match tok.kind {
-            QuickAddKind::Title => title_parts.push(tok.text),
+            QuickAddKind::Title => title_parts.push(tok.text.clone()),
             QuickAddKind::Tag => tags.push(tok.text[1..].to_string()),
-            QuickAddKind::Time => time_str = Some(tok.text[1..].to_string()),
+            QuickAddKind::Time => {
+                let mut combined = tok.text[1..].to_string();
+                // 吸收紧跟的裸 HH:MM，使 `~2026-08-20 15:30` 成为完整绝对时间。
+                if let Some(next) = tokens.get(i + 1) {
+                    if next.kind == QuickAddKind::Title && is_hhmm(&next.text) {
+                        combined.push(' ');
+                        combined.push_str(&next.text);
+                        i += 1;
+                    }
+                }
+                time_str = Some(combined);
+            }
             QuickAddKind::Rrule => rrule = Some(parse_rrule_shorthand(&tok.text[1..])),
             QuickAddKind::Priority => {
                 let letter = &tok.text[1..];
@@ -107,10 +121,11 @@ pub fn parse_quick_add(input: &str) -> QuickAdd {
                     priority = Some(tag.to_string());
                 } else {
                     // 无法识别的 !x 词按普通标题处理, 不静默丢弃
-                    title_parts.push(tok.text);
+                    title_parts.push(tok.text.clone());
                 }
             }
         }
+        i += 1;
     }
 
     QuickAdd {
@@ -122,12 +137,33 @@ pub fn parse_quick_add(input: &str) -> QuickAdd {
     }
 }
 
+/// 是否形如裸的 `HH:MM`（1-2 位小时 + 冒号 + 2 位分钟）。
+fn is_hhmm(s: &str) -> bool {
+    let mut parts = s.split(':');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(h), Some(m), None) => {
+            !h.is_empty()
+                && !m.is_empty()
+                && h.len() <= 2
+                && m.len() == 2
+                && h.chars().all(|c| c.is_ascii_digit())
+                && m.chars().all(|c| c.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
 pub fn parse_rrule_shorthand(s: &str) -> String {
     let lower = s.to_lowercase();
     if lower.starts_with("freq=") {
         return s.to_string();
     }
     match lower.as_str() {
+        // 单字母简写：`*d` → 每天, `*w` → 每周, `*m` → 每月, `*y` → 每年。
+        "d" => return "FREQ=DAILY".to_string(),
+        "w" => return "FREQ=WEEKLY".to_string(),
+        "m" => return "FREQ=MONTHLY".to_string(),
+        "y" => return "FREQ=YEARLY".to_string(),
         "daily" => return "FREQ=DAILY".to_string(),
         "weekly" => return "FREQ=WEEKLY".to_string(),
         "monthly" => return "FREQ=MONTHLY".to_string(),
@@ -286,6 +322,41 @@ mod tests {
         let q = parse_quick_add("无效 !z 保留");
         assert_eq!(q.title, "无效 !z 保留");
         assert_eq!(q.priority, None);
+    }
+
+    #[test]
+    fn rrule_single_letter_shorthand() {
+        assert_eq!(parse_rrule_shorthand("d"), "FREQ=DAILY");
+        assert_eq!(parse_rrule_shorthand("w"), "FREQ=WEEKLY");
+        assert_eq!(parse_rrule_shorthand("m"), "FREQ=MONTHLY");
+        assert_eq!(parse_rrule_shorthand("y"), "FREQ=YEARLY");
+        // 大小写不敏感
+        assert_eq!(parse_rrule_shorthand("D"), "FREQ=DAILY");
+    }
+
+    #[test]
+    fn rrule_single_letter_shorthand_quick_add() {
+        let q = parse_quick_add("晨跑 *d ~07:00");
+        assert_eq!(q.title, "晨跑");
+        assert_eq!(q.rrule.as_deref(), Some("FREQ=DAILY"));
+        assert_eq!(q.time_str.as_deref(), Some("07:00"));
+    }
+
+    #[test]
+    fn time_absorbs_following_hhmm() {
+        let q = parse_quick_add("开会 ~2026-08-20 15:30 @work");
+        assert_eq!(q.title, "开会");
+        assert_eq!(q.time_str.as_deref(), Some("2026-08-20 15:30"));
+        assert_eq!(q.tags, vec!["work"]);
+
+        let q = parse_quick_add("买牛奶 ~明天 09:00");
+        assert_eq!(q.time_str.as_deref(), Some("明天 09:00"));
+        assert_eq!(q.title, "买牛奶");
+
+        // 无 ~ 前缀的裸时刻不被吸收，留在标题
+        let q = parse_quick_add("报告 15:30 ~today");
+        assert_eq!(q.time_str.as_deref(), Some("today"));
+        assert!(q.title.contains("15:30"), "裸时刻留在标题: {}", q.title);
     }
 
     #[test]

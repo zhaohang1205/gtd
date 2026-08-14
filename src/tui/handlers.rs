@@ -1,5 +1,4 @@
 use super::app::{App, Mode, Pane, View};
-use super::calendar;
 use crate::model::task::{self};
 use crate::repo::tasks::CaptureInput;
 use crate::repo::{tags, tasks};
@@ -239,6 +238,24 @@ impl<'a> AppHandlers for App<'a> {
                 if self.view == View::Tags {
                     self.set_mode(Mode::CreatingTag);
                     self.input.clear();
+                } else if let Some(row) = self.items.get(self.selected).cloned() {
+                    if row.status == task::Status::Inbox.to_string() {
+                        // 滞留在 Inbox 的任务：与 capture 同一入口，再编辑该任务
+                        if let Ok(task) = tasks::get(self.conn, &row.id) {
+                            self.organizing_id = Some(task.id.clone());
+                            self.input = self.task_to_quick_add(&task);
+                            self.set_mode(Mode::Capturing);
+                            self.status_message = crate::tr!(
+                                self.lang,
+                                "组织: 编辑 @标签 ~时间 *周期 (空/Esc 跳过)",
+                                "organize: edit @tags ~time *rrule (empty/Esc to skip)"
+                            )
+                            .into();
+                        }
+                    } else {
+                        self.set_mode(Mode::Capturing);
+                        self.input.clear();
+                    }
                 } else {
                     self.set_mode(Mode::Capturing);
                     self.input.clear();
@@ -293,11 +310,6 @@ impl<'a> AppHandlers for App<'a> {
                 self.input.clear();
             }
             KeyCode::Char('s') => self.act_on_selected(task::Status::Someday)?,
-            KeyCode::Char('c') => {
-                self.set_mode(Mode::SchedulingCalendar);
-                self.calendar = calendar::CalendarState::new();
-                self.input.clear();
-            }
             KeyCode::Char('t') => {
                 self.set_mode(Mode::Tagging);
                 self.input.clear();
@@ -409,7 +421,7 @@ impl<'a> AppHandlers for App<'a> {
                     self.pending_archive_ids.len()
                 );
             }
-            KeyCode::Enter => self.act_on_selected(task::Status::Next)?,
+            KeyCode::Enter => self.open_organize()?,
             KeyCode::Char(' ') => {
                 if let Ok(pomo) = crate::repo::pomodoro::get_state() {
                     let is_in_break = matches!(
@@ -529,22 +541,6 @@ impl<'a> AppHandlers for App<'a> {
     }
 
     fn handle_input(&mut self, key: KeyEvent) -> Result<()> {
-        if self.mode == Mode::SchedulingCalendar {
-            if let Some(res) = self.calendar.handle_key(key.code) {
-                match res {
-                    Some((start, end)) => {
-                        self.sched_dates = Some((start, end));
-                        self.set_mode(Mode::SchedulingTimeRRule);
-                        self.input.clear();
-                    }
-                    None => {
-                        self.set_mode(Mode::Normal);
-                    }
-                }
-            }
-            return Ok(());
-        }
-
         if self.mode == Mode::ConfirmArchive {
             match key.code {
                 KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
@@ -643,6 +639,7 @@ impl<'a> AppHandlers for App<'a> {
 
         match key.code {
             KeyCode::Esc => {
+                self.organizing_id = None;
                 self.set_mode(Mode::Normal);
                 self.input.clear();
                 self.reload()?;
@@ -831,13 +828,77 @@ impl<'a> AppHandlers for App<'a> {
             }
             Mode::Capturing => {
                 let raw_input = input.trim();
-                if !raw_input.is_empty() {
-                    let quick_add = crate::parser::parse_quick_add(raw_input);
-                    let due_at = if let Some(ref t) = quick_add.time_str {
-                        time::parse_time(t).ok()
-                    } else {
-                        None
+                if raw_input.is_empty() {
+                    self.organizing_id = None;
+                    return Ok(());
+                }
+                let quick_add = crate::parser::parse_quick_add(raw_input);
+                if let Some(id) = self.organizing_id.take() {
+                    // Inbox 滞留任务再编辑：与 capture 同一句话编辑器
+                    let Ok(task) = tasks::get(self.conn, &id) else {
+                        self.reload()?;
+                        return Ok(());
                     };
+                    let start_ms = match &quick_add.time_str {
+                        Some(t) => match time::parse_time(t) {
+                            Ok(ms) => Some(ms),
+                            Err(e) => {
+                                self.status_message =
+                                    crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e);
+                                self.reload()?;
+                                return Ok(());
+                            }
+                        },
+                        None => None,
+                    };
+                    if !quick_add.title.is_empty() {
+                        let _ = tasks::rename(self.conn, &id, &quick_add.title);
+                    }
+                    let mut tag_names = quick_add.tags;
+                    if let Some(p) = &quick_add.priority {
+                        tag_names.push(p.clone());
+                    }
+                    let new_set: std::collections::HashSet<String> =
+                        tag_names.iter().cloned().collect();
+                    let old_tags =
+                        crate::repo::tags::get_task_tags(self.conn, &id).unwrap_or_default();
+                    for tg in &old_tags {
+                        if !new_set.contains(&tg.name) {
+                            let _ =
+                                crate::repo::tags::remove_tag_from_task(self.conn, &id, &tg.name);
+                        }
+                    }
+                    for name in &tag_names {
+                        let _ = crate::repo::tags::add_tag_to_task(self.conn, &id, name);
+                    }
+                    // ~time → 排程起点（自动分类 Inbox→Scheduled）；无时间则仅改周期。
+                    if let Some(start) = start_ms {
+                        if Some(start) != task.scheduled_start_at || quick_add.rrule != task.rrule {
+                            let _ = tasks::schedule(
+                                self.conn,
+                                &id,
+                                start,
+                                None,
+                                quick_add.rrule.clone(),
+                            );
+                        }
+                    } else if quick_add.rrule != task.rrule {
+                        let _ = tasks::set_rrule(self.conn, &id, quick_add.rrule.clone());
+                    }
+                    self.status_message =
+                        crate::tr!(self.lang, "已组织 {}", "organized {}", short_id(&id));
+                    self.reload()?;
+                } else {
+                    // 新建捕获：~time → 排程起点（创建后 schedule 设 scheduled_start_at, 状态 Scheduled, 无终点）
+                    let time_str = quick_add.time_str.clone();
+                    let rrule = quick_add.rrule;
+                    if let Some(ts) = &time_str {
+                        if let Err(e) = time::parse_time(ts) {
+                            self.status_message =
+                                crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e);
+                            return Ok(());
+                        }
+                    }
                     let mut tag_names = quick_add.tags;
                     if let Some(p) = &quick_add.priority {
                         tag_names.push(p.clone());
@@ -846,17 +907,25 @@ impl<'a> AppHandlers for App<'a> {
                         self.conn,
                         &CaptureInput {
                             title: quick_add.title,
-                            status: if due_at.is_some() {
+                            status: if time_str.is_some() {
                                 task::Status::Scheduled
                             } else {
                                 task::Status::Inbox
                             },
-                            due_at,
+                            due_at: None,
                             tag_names,
-                            rrule: quick_add.rrule,
+                            rrule: if time_str.is_some() {
+                                None
+                            } else {
+                                rrule.clone()
+                            },
                             ..Default::default()
                         },
                     )?;
+                    if let Some(ts) = &time_str {
+                        let start = time::parse_time(ts).unwrap();
+                        let _ = tasks::schedule(self.conn, &t.id, start, None, rrule);
+                    }
                     self.set_view(View::Inbox);
                     self.status_message =
                         crate::tr!(self.lang, "已捕获 {}", "captured {}", short_id(&t.id));
@@ -888,63 +957,6 @@ impl<'a> AppHandlers for App<'a> {
                     self.selected_ids.clear();
                     self.visual_start_idx = None;
                     self.reload()?;
-                }
-            }
-            Mode::SchedulingCalendar => {}
-            Mode::SchedulingTimeRRule => {
-                if let Some((start_d, end_d)) = self.sched_dates.take() {
-                    let parts: Vec<&str> = input.splitn(2, ';').collect();
-                    let time_part = parts[0].trim();
-                    let rrule_part = parts
-                        .get(1)
-                        .map(|s| s.trim_start_matches("rrule=").trim().to_string());
-                    let final_rrule = rrule_part.filter(|r| !r.is_empty());
-
-                    let (start_t_str, end_t_str) = if time_part.contains('-') {
-                        let mut s = time_part.splitn(2, '-');
-                        (
-                            s.next().unwrap_or("00:00").trim(),
-                            s.next().unwrap_or("23:59").trim(),
-                        )
-                    } else if !time_part.is_empty() {
-                        (time_part, "23:59")
-                    } else {
-                        ("00:00", "23:59")
-                    };
-
-                    let start_time = chrono::NaiveTime::parse_from_str(start_t_str, "%H:%M")
-                        .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-                    let end_time = chrono::NaiveTime::parse_from_str(end_t_str, "%H:%M")
-                        .unwrap_or_else(|_| chrono::NaiveTime::from_hms_opt(23, 59, 59).unwrap());
-
-                    let start_ms = start_d
-                        .and_time(start_time)
-                        .and_local_timezone(chrono::Local)
-                        .single()
-                        .map(|t| t.timestamp_millis())
-                        .unwrap_or_else(|| {
-                            start_d.and_time(start_time).and_utc().timestamp_millis()
-                        });
-                    let end_ms = end_d
-                        .and_time(end_time)
-                        .and_local_timezone(chrono::Local)
-                        .single()
-                        .map(|t| t.timestamp_millis())
-                        .unwrap_or_else(|| end_d.and_time(end_time).and_utc().timestamp_millis());
-
-                    if let Some(row) = self.items.get(self.selected).cloned() {
-                        let _ = tasks::schedule(
-                            self.conn,
-                            &row.id,
-                            start_ms,
-                            Some(end_ms),
-                            final_rrule,
-                        );
-                        self.status_message =
-                            crate::tr!(self.lang, "已排程 {}", "scheduled {}", short_id(&row.id));
-                        self.refresh().unwrap_or(());
-                        self.load_detail();
-                    }
                 }
             }
             Mode::WaitingWho => {
@@ -982,30 +994,6 @@ impl<'a> AppHandlers for App<'a> {
                                 crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e)
                         }
                     }
-                }
-            }
-            Mode::PlanningTime => {
-                let start_s = input.trim();
-                if let Some(row) = self.items.get(self.selected).cloned() {
-                    if !start_s.is_empty() {
-                        match time::parse_time(start_s) {
-                            Ok(start_ms) => {
-                                tasks::set_due(self.conn, &row.id, Some(start_ms))?;
-                                self.status_message = crate::tr!(
-                                    self.lang,
-                                    "已设截止时间 {}",
-                                    "due set {}",
-                                    short_id(&row.id)
-                                );
-                            }
-                            Err(e) => {
-                                self.status_message =
-                                    crate::tr!(self.lang, "时间无效: {}", "bad time: {}", e)
-                            }
-                        }
-                    }
-                    self.set_mode(Mode::Normal);
-                    self.reload()?;
                 }
             }
             Mode::ChecklistAdding => {

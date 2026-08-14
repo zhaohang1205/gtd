@@ -238,8 +238,8 @@ pub(crate) const KEY_TABLE: &[KeyDef] = &[
     // ── Task ──
     KeyDef {
         keys: "Enter",
-        zh: "理清",
-        en: "clarify",
+        zh: "组织/编辑",
+        en: "organize",
         group: KeyGroup::Task,
         status: false,
         when: When::SelectionNot(NON_TASK_VIEWS),
@@ -264,14 +264,6 @@ pub(crate) const KEY_TABLE: &[KeyDef] = &[
         keys: "s",
         zh: "将来",
         en: "someday",
-        group: KeyGroup::Task,
-        status: false,
-        when: When::SelectionNot(NON_TASK_VIEWS),
-    },
-    KeyDef {
-        keys: "c",
-        zh: "排期",
-        en: "schedule",
         group: KeyGroup::Task,
         status: false,
         when: When::SelectionNot(NON_TASK_VIEWS),
@@ -382,8 +374,8 @@ pub(crate) const KEY_TABLE: &[KeyDef] = &[
     },
     KeyDef {
         keys: "Space",
-        zh: "打卡",
-        en: "tick",
+        zh: "勾选/续杯",
+        en: "tick/continue",
         group: KeyGroup::Task,
         status: false,
         when: When::SelectionNot(NON_TASK_VIEWS),
@@ -438,12 +430,12 @@ fn view_task_keys(c: &Ctx, lang: Lang) -> Vec<(&'static str, &'static str)> {
         &["R"]
     } else {
         match c.view {
-            View::Inbox => &["Enter", "x", "c", "t"],
-            View::Today | View::Tomorrow => &["Enter", "x", "Space", "c"],
-            View::Next => &["Enter", "Space", "x", "c"],
-            View::Waiting => &["w", "x", "c"],
-            View::Scheduled => &["c", "d", "L", "x"],
-            View::Someday => &["s", "c", "x"],
+            View::Inbox => &["Enter", "x", "t"],
+            View::Today | View::Tomorrow => &["Enter", "x", "Space"],
+            View::Next => &["Enter", "Space", "x"],
+            View::Waiting => &["w", "x"],
+            View::Scheduled => &["d", "L", "x"],
+            View::Someday => &["s", "x"],
             View::Reference => &["e", "n", "t"],
             View::Done => &["A/D", "e", "n"],
             View::Review => &["R"],
@@ -480,11 +472,6 @@ fn mode_keys(mode: Mode, lang: Lang) -> Vec<(&'static str, &'static str)> {
     use Mode::*;
     let mut v: Vec<(&'static str, &'static str)> = Vec::new();
     match mode {
-        SchedulingCalendar => {
-            v.push(("h/j/k/l", lang.tr("移动日期", "move")));
-            v.push(("Enter", lang.tr("选起止", "pick")));
-            v.push(("Esc/q", lang.tr("退出", "exit")));
-        }
         ConfirmArchive | ConfirmPurge => {
             v.push(("y/Enter", lang.tr("确认", "confirm")));
             v.push(("n/Esc", lang.tr("取消", "cancel")));

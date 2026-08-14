@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- RRULE 单字母简写：`*d`/`*w`/`*m`/`*y` 现在解析为完整的
+  `FREQ=DAILY|WEEKLY|MONTHLY|YEARLY`，不再把裸 `"d"` 存进数据库。`gtp capture`
+  也会保留 quick-add 里的 `*rrule` 令牌（此前只有 TUI 生效）。
+- 新增迁移 v6，把历史遗留的裸 `"d"`/`"w"`/`"m"`/`"y"` 循环规则规范化为完整 RRULE。
+
 - `README.md` is now a bilingual (中文/English) user manual.
 - Removed the stale `CODEBUDDY.md`; `AGENTS.md` is the single authoritative
   contributor guide, with test locations and CI usage corrected.
