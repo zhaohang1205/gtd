@@ -8,6 +8,11 @@ use crate::repo::log_event;
 use crate::time;
 use anyhow::Result;
 
+/// Columns for the `tasks` table, shared by every row-mapping query.
+const TASK_COLUMNS: &str = "id,title,notes,status,rrule,created_at,clarified_at,\
+        due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
+        delegated_to,checklist,archive_reason";
+
 /// Input for creating a task (capture).
 pub struct CaptureInput {
     pub title: String,
@@ -34,12 +39,7 @@ impl Default for CaptureInput {
 }
 
 pub fn get(conn: &Connection, id: &str) -> Result<Task> {
-    let mut stmt = conn.prepare(
-        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
-                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist,archive_reason \
-         FROM tasks WHERE id = ?1",
-    )?;
+    let mut stmt = conn.prepare(&format!("SELECT {} FROM tasks WHERE id = ?1", TASK_COLUMNS))?;
     let mut rows = stmt.query_map([id], row_to_task)?;
     rows.next()
         .transpose()?
@@ -77,9 +77,25 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
         ],
     )?;
     let status_str = status.to_string();
-    log_event(&tx, &id, event::EV_CAPTURED, None, Some(&status_str), None)?;
+    log_event(
+        &tx,
+        &id,
+        event::EV_CAPTURED,
+        None,
+        Some(&status_str),
+        None,
+        now,
+    )?;
     if clarified.is_some() {
-        log_event(&tx, &id, event::EV_CLARIFIED, None, Some(&status_str), None)?;
+        log_event(
+            &tx,
+            &id,
+            event::EV_CLARIFIED,
+            None,
+            Some(&status_str),
+            None,
+            now,
+        )?;
     }
 
     for tag in &input.tag_names {
@@ -185,6 +201,7 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
                             Some(&from.to_string()),
                             Some(&task::Status::Done.to_string()),
                             None,
+                            now,
                         )?;
 
                         if t.scheduled_start_at.is_some() {
@@ -226,7 +243,7 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
     };
     let from_str = from.to_string();
     let to_str = to_status.to_string();
-    log_event(&tx, id, ev, Some(&from_str), Some(&to_str), None)?;
+    log_event(&tx, id, ev, Some(&from_str), Some(&to_str), None, now)?;
     tx.commit()?;
     Ok(t)
 }
@@ -235,14 +252,15 @@ pub fn transition(conn: &Connection, id: &str, to_status: task::Status) -> Resul
 /// inbox→next planning hook so a next action keeps its status while gaining a due.
 pub fn set_due(conn: &Connection, id: &str, due_ms: Option<i64>) -> Result<Task> {
     let mut t = get(conn, id)?;
+    let now = time::now_ms();
     t.due_at = due_ms;
-    t.updated_at = time::now_ms();
+    t.updated_at = now;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE tasks SET due_at=?1, updated_at=?2 WHERE id=?3",
         rusqlite::params![t.due_at, t.updated_at, id],
     )?;
-    log_event(&tx, id, event::EV_DUE, None, None, None)?;
+    log_event(&tx, id, event::EV_DUE, None, None, None, now)?;
     tx.commit()?;
     get(conn, id)
 }
@@ -252,8 +270,9 @@ pub fn set_due(conn: &Connection, id: &str, due_ms: Option<i64>) -> Result<Task>
 pub fn set_rrule(conn: &Connection, id: &str, rrule: Option<String>) -> Result<Task> {
     let mut t = get(conn, id)?;
     let from = t.status;
+    let now = time::now_ms();
     t.rrule = rrule.clone();
-    t.updated_at = time::now_ms();
+    t.updated_at = now;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
         "UPDATE tasks SET rrule=?1, updated_at=?2 WHERE id=?3",
@@ -271,6 +290,7 @@ pub fn set_rrule(conn: &Connection, id: &str, rrule: Option<String>) -> Result<T
         Some(&from.to_string()),
         Some(&to_s),
         meta.as_deref(),
+        now,
     )?;
     tx.commit()?;
     Ok(t)
@@ -332,6 +352,7 @@ pub fn schedule(
         Some(&from_str),
         Some("scheduled"),
         meta.as_deref(),
+        now,
     )?;
     tx.commit()?;
     Ok(t)
@@ -350,7 +371,7 @@ pub fn archive(conn: &Connection, id: &str) -> Result<Task> {
         "UPDATE tasks SET archived_at=?1, archive_reason=?2, updated_at=?3 WHERE id=?4",
         rusqlite::params![now, reason, now, id],
     )?;
-    log_event(&tx, id, event::EV_ARCHIVED, None, None, Some(reason))?;
+    log_event(&tx, id, event::EV_ARCHIVED, None, None, Some(reason), now)?;
     tx.commit()?;
     get(conn, id)
 }
@@ -364,7 +385,7 @@ pub fn unarchive(conn: &Connection, id: &str) -> Result<Task> {
         "UPDATE tasks SET archived_at=NULL, archive_reason=NULL, updated_at=?1 WHERE id=?2",
         rusqlite::params![now, id],
     )?;
-    log_event(&tx, id, event::EV_RESTORED, None, None, None)?;
+    log_event(&tx, id, event::EV_RESTORED, None, None, None, now)?;
     tx.commit()?;
     get(conn, id)
 }
@@ -410,28 +431,18 @@ pub fn due_in_range(
     let rows = stmt.query_map(rusqlite::params![start_ms, end_ms], |r| {
         Ok((r.get(0)?, r.get(1)?, r.get(2)?))
     })?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// List only archived (soft-deleted) tasks, for the restore UI.
 pub fn list_archived(conn: &Connection) -> Result<Vec<Task>> {
-    let mut stmt = conn.prepare(
-        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
-                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist,archive_reason \
-         FROM tasks WHERE archived_at IS NOT NULL \
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {} FROM tasks WHERE archived_at IS NOT NULL \
          ORDER BY archived_at DESC",
-    )?;
+        TASK_COLUMNS
+    ))?;
     let rows = stmt.query_map([], row_to_task)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 pub struct ListFilter {
@@ -442,12 +453,46 @@ pub struct ListFilter {
 }
 
 pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
-    let mut sql = String::from(
-        "SELECT id,title,notes,status,rrule,created_at,clarified_at,\
-                due_at,scheduled_start_at,scheduled_end_at,started_at,completed_at,archived_at,updated_at,\
-                delegated_to,checklist,archive_reason \
-         FROM tasks WHERE archived_at IS NULL",
+    let (where_sql, params) = filter_where(f);
+    let sql = format!(
+        "SELECT {} FROM tasks WHERE archived_at IS NULL{where_sql} \
+         ORDER BY (scheduled_start_at IS NOT NULL) DESC, scheduled_start_at ASC, due_at ASC, created_at ASC",
+        TASK_COLUMNS
     );
+    let mut stmt = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), row_to_task)?;
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+}
+
+/// 未归档任务按状态分组计数（`status 字符串 -> 数量`），一次 GROUP BY 取代逐状态
+/// COUNT。仅按搜索条件过滤，供侧栏徽标复用。
+pub fn count_by_status(
+    conn: &Connection,
+    query: Option<&str>,
+) -> Result<std::collections::HashMap<String, usize>> {
+    let f = ListFilter {
+        status: None,
+        tags: vec![],
+        query: query.map(String::from),
+        review_stale: false,
+    };
+    let (where_sql, params) = filter_where(&f);
+    let sql = format!(
+        "SELECT status, COUNT(*) FROM tasks WHERE archived_at IS NULL{where_sql} GROUP BY status"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, usize>(1)?))
+    })?;
+    Ok(rows.collect::<rusqlite::Result<_>>()?)
+}
+
+/// Build the `WHERE` fragment (including its leading ` AND …`) and the bound
+/// parameters shared by `list` and `count`.
+fn filter_where(f: &ListFilter) -> (String, Vec<Box<dyn rusqlite::ToSql>>) {
+    let mut sql = String::new();
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(s) = &f.status {
         sql.push_str(" AND status = ?");
@@ -470,43 +515,7 @@ pub fn list(conn: &Connection, f: &ListFilter) -> Result<Vec<Task>> {
         params.push(Box::new(like_q.clone()));
         params.push(Box::new(like_q));
     }
-    sql.push_str(
-        " ORDER BY (scheduled_start_at IS NOT NULL) DESC, scheduled_start_at ASC, due_at ASC, created_at ASC",
-    );
-
-    let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(param_refs.as_slice(), row_to_task)?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
-}
-
-pub fn count(conn: &Connection, f: &ListFilter) -> Result<usize> {
-    let mut sql = String::from("SELECT COUNT(*) FROM tasks WHERE archived_at IS NULL");
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(s) = &f.status {
-        sql.push_str(" AND status = ?");
-        params.push(Box::new(s.to_string()));
-    }
-    for tag in &f.tags {
-        sql.push_str(
-            " AND id IN (SELECT task_id FROM task_tags tt JOIN tags g ON g.id=tt.tag_id WHERE g.name = ?)",
-        );
-        params.push(Box::new(tag.clone()));
-    }
-    if let Some(q) = &f.query {
-        sql.push_str(" AND (title LIKE ? OR notes LIKE ?)");
-        let like_q = format!("%{}%", q);
-        params.push(Box::new(like_q.clone()));
-        params.push(Box::new(like_q));
-    }
-    let mut stmt = conn.prepare(&sql)?;
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-    let c: usize = stmt.query_row(param_refs.as_slice(), |r| r.get(0))?;
-    Ok(c)
+    (sql, params)
 }
 
 /// Inbox 中在 `before_ms` 之前收集、至今未澄清的任务 (id, title)，
@@ -518,11 +527,7 @@ pub fn list_stale_inbox(conn: &Connection, before_ms: i64) -> Result<Vec<(String
          ORDER BY created_at ASC",
     )?;
     let rows = stmt.query_map([before_ms], |r| Ok((r.get(0)?, r.get(1)?)))?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// Waiting 中 `before_ms` 以来未再动过的任务 (id, title)，
@@ -534,11 +539,7 @@ pub fn list_stale_waiting(conn: &Connection, before_ms: i64) -> Result<Vec<(Stri
          ORDER BY updated_at ASC",
     )?;
     let rows = stmt.query_map([before_ms], |r| Ok((r.get(0)?, r.get(1)?)))?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 /// 自 `since_ms` 以来完成的任务数（含随后归档的已完成任务）。
@@ -562,11 +563,7 @@ pub fn checked_in_today(conn: &Connection, since_ms: i64) -> Result<Vec<String>>
         rusqlite::params![event::EV_HABIT_COMPLETED, since_ms],
         |r| r.get::<_, String>(0),
     )?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>> {
@@ -585,11 +582,7 @@ pub fn events(conn: &Connection, task_id: &str) -> Result<Vec<event::TaskEvent>>
             meta: r.get(6)?,
         })
     })?;
-    let mut out = Vec::new();
-    for r in rows {
-        out.push(r?);
-    }
-    Ok(out)
+    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
 fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
@@ -623,16 +616,7 @@ fn row_to_task(r: &rusqlite::Row) -> rusqlite::Result<Task> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::migrate;
-
-    /// Build a temp-file DB with migrations applied. Returns the dir to keep it alive.
-    fn test_conn() -> (tempfile::TempDir, Connection) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("gtp.db");
-        let mut conn = Connection::open(&path).unwrap();
-        migrate::run(&mut conn).unwrap();
-        (dir, conn)
-    }
+    use crate::testutil::test_conn;
 
     fn count_rows(conn: &Connection, table: &str, task_id: &str) -> usize {
         conn.query_row(

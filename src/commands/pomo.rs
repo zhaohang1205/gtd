@@ -141,6 +141,7 @@ pub fn daemon() -> Result<()> {
                             None,
                             None,
                             Some(&duration.to_string()),
+                            now,
                         );
                     }
 

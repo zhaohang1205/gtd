@@ -63,7 +63,28 @@ pub(crate) fn row_from(t: &Task, indent: usize, conn: &Connection) -> Result<Row
 }
 
 /// 用已取好的标签名构建行，避免每行一次 DB 查询。
+/// 循环任务会展开一次 rrule 来算展示用到期时间；批量刷新请改用
+/// [`row_from_tags_with_due`] 传入预计算值。
 pub(crate) fn row_from_tags(t: &Task, indent: usize, tags: Vec<String>) -> Row {
+    let due = if t.archived_at.is_some() {
+        t.archived_at
+    } else if t.status == task::Status::Done {
+        t.completed_at.or(t.due_at).or(t.scheduled_start_at)
+    } else {
+        // 循环任务用 effective_due：错过 slot 即显示其时间（逾期），
+        // 已打卡后锚点已推进为下次执行时间。
+        crate::commands::effective_due(t)
+    };
+    row_from_tags_with_due(t, indent, tags, due)
+}
+
+/// 用已取好的标签名与预计算好的展示用到期时间构建行。
+pub(crate) fn row_from_tags_with_due(
+    t: &Task,
+    indent: usize,
+    tags: Vec<String>,
+    due: Option<i64>,
+) -> Row {
     // 完成进度：行动按检查单完成数。
     let (done, total) = if !t.checklist.is_empty() {
         let total = t.checklist.len();
@@ -77,15 +98,7 @@ pub(crate) fn row_from_tags(t: &Task, indent: usize, tags: Vec<String>) -> Row {
         id: t.id.clone(),
         title: t.title.clone(),
         status: t.status.to_string(),
-        due: if t.archived_at.is_some() {
-            t.archived_at
-        } else if t.status == task::Status::Done {
-            t.completed_at.or(t.due_at).or(t.scheduled_start_at)
-        } else {
-            // 循环任务用 effective_due：错过 slot 即显示其时间（逾期），
-            // 已打卡后锚点已推进为下次执行时间。
-            crate::commands::effective_due(t)
-        },
+        due,
         tags,
         indent,
         done,

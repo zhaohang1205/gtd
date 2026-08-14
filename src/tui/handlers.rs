@@ -277,18 +277,19 @@ impl<'a> AppHandlers for App<'a> {
                         )?;
 
                         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                        let mut temp_file = tempfile::NamedTempFile::new()?;
+                        let temp_path = std::env::temp_dir()
+                            .join(format!("gtp_notes_{}.md", uuid::Uuid::new_v4()));
                         use std::io::Write;
-                        temp_file.write_all(task.notes.as_bytes())?;
+                        let mut file = std::fs::File::create(&temp_path)?;
+                        file.write_all(task.notes.as_bytes())?;
+                        drop(file);
 
-                        let _ = std::process::Command::new(editor)
-                            .arg(temp_file.path())
-                            .status();
+                        let _ = std::process::Command::new(editor).arg(&temp_path).status();
 
-                        if let Ok(new_notes) = std::fs::read_to_string(temp_file.path()) {
-                            if new_notes != task.notes {
-                                let _ = tasks::update_notes(self.conn, &task.id, &new_notes);
-                            }
+                        let new_notes = std::fs::read_to_string(&temp_path).unwrap_or_default();
+                        let _ = std::fs::remove_file(&temp_path);
+                        if new_notes != task.notes {
+                            let _ = tasks::update_notes(self.conn, &task.id, &new_notes);
                         }
 
                         crossterm::terminal::enable_raw_mode()?;

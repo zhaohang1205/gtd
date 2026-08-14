@@ -88,14 +88,7 @@ pub fn run(conn: &Connection, args: CaptureArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn test_conn() -> (tempfile::TempDir, rusqlite::Connection) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("gtp.db");
-        let mut conn = rusqlite::Connection::open(&path).unwrap();
-        crate::db::migrate::run(&mut conn).unwrap();
-        (dir, conn)
-    }
+    use crate::testutil::test_conn;
 
     #[test]
     fn capture_keeps_quick_add_rrule() {

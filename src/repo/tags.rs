@@ -86,6 +86,7 @@ pub(crate) fn add_tag_to_task_inner(
         None,
         None,
         Some(&meta),
+        now,
     )?;
     Ok(())
 }
@@ -101,6 +102,7 @@ pub fn remove_tag_from_task(conn: &Connection, task_id: &str, tag_name: &str) ->
     if deleted == 0 {
         return Err(Error::TagNotFound(tag_name.to_string()).into());
     }
+    let now = time::now_ms();
     let meta = format!("{{\"name\":\"{}\"}}", tag_name);
     log_event(
         &tx,
@@ -109,6 +111,7 @@ pub fn remove_tag_from_task(conn: &Connection, task_id: &str, tag_name: &str) ->
         None,
         None,
         Some(&meta),
+        now,
     )?;
     tx.commit()?;
     Ok(())
@@ -131,6 +134,7 @@ pub fn delete_tag(conn: &Connection, tag_name: &str) -> Result<()> {
         drop(stmt);
 
         let meta = format!("{{\"name\":\"{}\"}}", tag_name);
+        let now = time::now_ms();
         for task_id in task_ids {
             let _ = log_event(
                 &tx,
@@ -139,6 +143,7 @@ pub fn delete_tag(conn: &Connection, tag_name: &str) -> Result<()> {
                 None,
                 None,
                 Some(&meta),
+                now,
             );
         }
 

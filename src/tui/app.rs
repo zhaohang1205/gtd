@@ -2,7 +2,7 @@ use anyhow::Result;
 use ratatui::widgets::ListState;
 use rusqlite::Connection;
 
-use super::row_from_tags;
+use super::row_from_tags_with_due;
 use crate::model::event::TaskEvent;
 use crate::model::tag::Tag;
 use crate::model::task::{self, Task};
@@ -221,6 +221,9 @@ pub(crate) struct App<'a> {
     pub(crate) notified_events: std::collections::HashSet<String>,
     /// 各视图计数缓存：`refresh` 时一次性算好，渲染帧内零 DB 查询。
     pub(crate) counts: [usize; 12],
+    /// 循环任务展开结果缓存（task_id -> 发生序列）：一次刷新内每个循环规则只
+    /// 展开一次，列表行与今日/明日视图复用，避免重复 `rrule_occurrences`。
+    pub(crate) rrule_cache: std::collections::HashMap<String, Vec<i64>>,
 }
 
 impl<'a> App<'a> {
@@ -276,6 +279,7 @@ impl<'a> App<'a> {
             last_tick_ms: 0,
             notified_events: std::collections::HashSet::new(),
             counts: [0; 12],
+            rrule_cache: std::collections::HashMap::new(),
         };
         app.refresh()?;
 
@@ -343,11 +347,7 @@ impl<'a> App<'a> {
                     let key = format!("{id}-{due}-1h");
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new()
-                            .summary("任务即将在1小时后开始")
-                            .body(&title)
-                            .appname("GTD")
-                            .show();
+                        crate::commands::notify::desktop("任务即将在1小时后开始", &title);
                     }
                 }
 
@@ -356,11 +356,7 @@ impl<'a> App<'a> {
                     let key = format!("{id}-{due}-10m");
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new()
-                            .summary("任务即将在10分钟后开始")
-                            .body(&title)
-                            .appname("GTD")
-                            .show();
+                        crate::commands::notify::desktop("任务即将在10分钟后开始", &title);
                     }
                 }
 
@@ -369,11 +365,7 @@ impl<'a> App<'a> {
                     let key = format!("{id}-{due}-now");
                     if !self.notified_events.contains(&key) {
                         self.notified_events.insert(key);
-                        let _ = notify_rust::Notification::new()
-                            .summary("任务现在开始!")
-                            .body(&title)
-                            .appname("GTD")
-                            .show();
+                        crate::commands::notify::desktop("任务现在开始!", &title);
                         self.popup = Some(Popup::TaskDueNow(id.clone(), title));
                         self.needs_clear = true; // force redraw to show popup
                     }
@@ -446,54 +438,36 @@ impl<'a> App<'a> {
         self.counts[v.idx()]
     }
 
-    /// 一次全量加载同时算出今日/明日列表：每个任务只读一次、每个循环规则只
-    /// 展开一次，供今日/明日视图与侧栏徽标复用，避免重复查询与重复 RRULE 展开。
+    /// 从已经一次性取出的 `all`（未归档、含标签/搜索过滤）里算出今日/明日列表。
+    /// 循环规则只展开一次，结果写入 `rrule_cache` 供本刷新周期内的列表行复用。
     /// `checked_today` 是今日已打卡的循环任务 id 集合（由 `refresh` 一次性查询）。
-    fn day_lists(&self, checked_today: &std::collections::HashSet<String>) -> (DayList, DayList) {
+    fn day_lists_from(
+        &mut self,
+        all: &[Task],
+        checked_today: &std::collections::HashSet<String>,
+    ) -> (DayList, DayList) {
         let (t0s, t0e) = crate::time::local_day_bounds(0);
         let (t1s, t1e) = crate::time::local_day_bounds(1);
-        let mut tags = vec![];
-        if let Some(ref tf) = self.tag_filter {
-            tags.push(tf.clone());
-        }
-        let query = if self.search_query.is_empty() {
-            None
-        } else {
-            Some(self.search_query.clone())
-        };
-        let tasks = tasks::list(
-            self.conn,
-            &ListFilter {
-                status: None,
-                tags,
-                query,
-                review_stale: false,
-            },
-        )
-        .unwrap_or_default();
 
         let mut today = Vec::new();
         let mut tomorrow = Vec::new();
         let now = crate::time::now_ms();
-        for t in tasks {
+        for t in all {
             if t.status == task::Status::Done {
                 continue;
             }
             let anchor = t.scheduled_start_at.or(t.due_at);
             let occs = match &t.rrule {
-                Some(rr) => anchor.and_then(|a| crate::time::rrule_occurrences(rr, a, 366).ok()),
+                Some(rr) => {
+                    let occ = anchor.and_then(|a| crate::time::rrule_occurrences(rr, a, 366).ok());
+                    if let Some(ref v) = occ {
+                        self.rrule_cache.insert(t.id.clone(), v.clone());
+                    }
+                    occ
+                }
                 None => None,
             };
-            // 今日已打卡的循环任务：保留在今日视图，展示下一次执行时间。
-            if t.rrule.is_some() && checked_today.contains(&t.id) {
-                if let Some(first) = occs
-                    .as_ref()
-                    .and_then(|o| o.iter().find(|m| **m >= now).copied())
-                {
-                    today.push((t.clone(), first));
-                }
-            }
-            // 非循环任务：今日/明日命中 ⇔ 锚点时间落在该日结束之前（含逾期结转）。
+            // 今日/明日命中 ⇔ 锚点时间落在该日结束之前（含逾期结转）。
             let (d0, d1) = match &occs {
                 Some(occs) => (
                     occs.iter().find(|m| **m >= t0s && **m <= t0e).copied(),
@@ -501,28 +475,80 @@ impl<'a> App<'a> {
                 ),
                 None => (anchor.filter(|d| *d <= t0e), anchor.filter(|d| *d <= t1e)),
             };
+            // 今日已打卡的循环任务：若其下一次执行不在今日窗口内（d0 未命中），仍保留在
+            // 今日视图展示下一次执行时间；d0 命中时由下方 match 统一入列，避免重复。
+            if t.rrule.is_some() && checked_today.contains(&t.id) && d0.is_none() {
+                if let Some(first) = occs
+                    .as_ref()
+                    .and_then(|o| o.iter().find(|m| **m >= now).copied())
+                {
+                    today.push((t.clone(), first));
+                }
+            }
             match (d0, d1) {
                 (Some(a), Some(b)) => {
                     today.push((t.clone(), a));
-                    tomorrow.push((t, b));
+                    tomorrow.push((t.clone(), b));
                 }
-                (Some(a), None) => today.push((t, a)),
-                (None, Some(b)) => tomorrow.push((t, b)),
+                (Some(a), None) => today.push((t.clone(), a)),
+                (None, Some(b)) => tomorrow.push((t.clone(), b)),
                 (None, None) => {}
             }
         }
         (today, tomorrow)
     }
 
+    /// 任务的展示用到期时间：归档用归档时间，已完成用完成时间，循环任务优先用
+    /// 缓存的展开结果算 effective_due（避免重复展开），否则回退到自由函数。
+    fn row_due(&self, t: &Task) -> Option<i64> {
+        if t.archived_at.is_some() {
+            return t.archived_at;
+        }
+        if t.status == task::Status::Done {
+            return t.completed_at.or(t.due_at).or(t.scheduled_start_at);
+        }
+        if t.rrule.is_some() {
+            if let Some(occs) = self.rrule_cache.get(&t.id) {
+                if let Some(d) = crate::commands::effective_due_from_occurrences(occs) {
+                    return Some(d);
+                }
+                return t.scheduled_start_at.or(t.due_at);
+            }
+        }
+        crate::commands::effective_due(t)
+    }
+
     pub(crate) fn refresh(&mut self) -> Result<()> {
         self.items.clear();
+        self.rrule_cache.clear();
         let today_start = crate::time::local_day_bounds(0).0;
         let checked_today: std::collections::HashSet<String> =
             tasks::checked_in_today(self.conn, today_start)
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
-        let (today, tomorrow) = self.day_lists(&checked_today);
+
+        // 一次取全未归档任务（含标签/搜索过滤），今日/明日与各状态视图共用，
+        // 避免重复全表扫描与重复 RRULE 展开。
+        let mut tag_f = vec![];
+        if let Some(ref tf) = self.tag_filter {
+            tag_f.push(tf.clone());
+        }
+        let all = tasks::list(
+            self.conn,
+            &ListFilter {
+                status: None,
+                tags: tag_f,
+                query: if self.search_query.is_empty() {
+                    None
+                } else {
+                    Some(self.search_query.clone())
+                },
+                review_stale: false,
+            },
+        )?;
+
+        let (today, tomorrow) = self.day_lists_from(&all, &checked_today);
         self.counts[View::Today.idx()] = today.len();
         self.counts[View::Tomorrow.idx()] = tomorrow.len();
         self.refresh_counts()?;
@@ -584,26 +610,12 @@ impl<'a> App<'a> {
             .collect(),
             _ => {
                 if let Some(s) = self.view.status() {
-                    let mut tag_f = vec![];
-                    if let Some(ref tf) = self.tag_filter {
-                        tag_f.push(tf.clone());
-                    }
-                    tasks::list(
-                        self.conn,
-                        &ListFilter {
-                            status: Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox)),
-                            tags: tag_f,
-                            query: if self.search_query.is_empty() {
-                                None
-                            } else {
-                                Some(self.search_query.clone())
-                            },
-                            review_stale: false,
-                        },
-                    )?
-                    .into_iter()
-                    .map(|t| (t, None))
-                    .collect()
+                    let target = s.parse::<task::Status>().unwrap_or(task::Status::Inbox);
+                    all.iter()
+                        .filter(|t| t.status == target)
+                        .cloned()
+                        .map(|t| (t, None))
+                        .collect()
                 } else {
                     Vec::new()
                 }
@@ -614,10 +626,13 @@ impl<'a> App<'a> {
         let ids: Vec<&str> = tasks.iter().map(|(t, _)| t.id.as_str()).collect();
         let tag_map = tags::get_tags_for_tasks(self.conn, &ids)?;
         for (t, due) in tasks {
-            let mut row = row_from_tags(&t, 0, tag_map.get(&t.id).cloned().unwrap_or_default());
-            if let Some(d) = due {
-                row.due = Some(d);
-            }
+            let base_due = due.or_else(|| self.row_due(&t));
+            let mut row = row_from_tags_with_due(
+                &t,
+                0,
+                tag_map.get(&t.id).cloned().unwrap_or_default(),
+                base_due,
+            );
             row.checked_in_today = checked_today.contains(&t.id);
             self.items.push(row);
         }
@@ -636,18 +651,12 @@ impl<'a> App<'a> {
         let query = if self.search_query.is_empty() {
             None
         } else {
-            Some(self.search_query.clone())
+            Some(self.search_query.as_str())
         };
-        let mut f = ListFilter {
-            status: None,
-            tags: vec![],
-            query,
-            review_stale: false,
-        };
+        let by_status = tasks::count_by_status(self.conn, query)?;
         for v in STATUS_VIEWS {
             let s = v.status().expect("status view");
-            f.status = Some(s.parse::<task::Status>().unwrap_or(task::Status::Inbox));
-            self.counts[v.idx()] = tasks::count(self.conn, &f)?;
+            self.counts[v.idx()] = by_status.get(s).copied().unwrap_or(0);
         }
         Ok(())
     }

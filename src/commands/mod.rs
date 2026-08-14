@@ -109,19 +109,23 @@ pub(crate) fn effective_due(task: &Task) -> Option<i64> {
     if let Some(rr) = &task.rrule {
         let anchor = task.scheduled_start_at.or(task.due_at);
         if let Some(start) = anchor {
-            let now = crate::time::now_ms();
             if let Ok(occ) = crate::time::rrule_occurrences(rr, start, 366) {
-                // 错过即逾期：优先取最近一次已错过的 slot，让列表/提醒/摘要把它
-                // 计为逾期并显示精确的逾期时长；打卡后锚点已推进，此处自然落到下次。
-                if let Some(missed) = occ.iter().rev().find(|m| **m <= now).copied() {
-                    return Some(missed);
-                }
-                if let Some(next) = occ.into_iter().find(|m| *m >= now) {
-                    return Some(next);
+                if let Some(d) = effective_due_from_occurrences(&occ) {
+                    return Some(d);
                 }
             }
             return Some(start);
         }
     }
     task.due_at.or(task.scheduled_start_at)
+}
+
+/// 从已经展开的发生序列里挑出「最近一次已错过（逾期）的 slot，否则下一个」。
+/// 供缓存了展开结果的路径复用，避免重复展开循环规则。
+pub(crate) fn effective_due_from_occurrences(occ: &[i64]) -> Option<i64> {
+    let now = crate::time::now_ms();
+    if let Some(missed) = occ.iter().rev().find(|m| **m <= now).copied() {
+        return Some(missed);
+    }
+    occ.iter().find(|m| **m >= now).copied()
 }

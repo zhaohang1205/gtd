@@ -7,6 +7,13 @@ use crate::time;
 use anyhow::Result;
 use chrono::{Duration, NaiveDate};
 
+/// 桌面通知：直接调用 `notify-send`（与 pomo.rs 一致），避免引入 zbus 依赖栈。
+pub fn desktop(summary: &str, body: &str) {
+    let _ = std::process::Command::new("notify-send")
+        .args(["-u", "normal", "-i", "appointment-soon", summary, body])
+        .status();
+}
+
 /// 收件箱/等待超期的默认阈值天数。
 pub const STALE_DAYS: i64 = 7;
 
@@ -160,16 +167,8 @@ fn prune(state: &mut notify::NotifyState, today: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::migrate;
     use crate::repo::tasks::{self, CaptureInput};
-
-    fn test_conn() -> (tempfile::TempDir, Connection) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("gtp.db");
-        let mut conn = Connection::open(&path).unwrap();
-        migrate::run(&mut conn).unwrap();
-        (dir, conn)
-    }
+    use crate::testutil::test_conn;
 
     fn mk(conn: &Connection, title: &str, status: Status) -> crate::model::task::Task {
         tasks::create_capture(

@@ -6,6 +6,8 @@ mod i18n;
 mod model;
 mod parser;
 mod repo;
+#[cfg(test)]
+mod testutil;
 mod time;
 mod tui;
 
