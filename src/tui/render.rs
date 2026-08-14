@@ -338,8 +338,8 @@ impl<'a> AppRender for App<'a> {
                     text_lines.push(Line::from(Span::styled(
                         crate::tr!(
                             self.lang,
-                            " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3])  |  !优先级 (如 !a)",
-                            " [syntax] @tag (@work)  |  ~time (~tomorrow, ~+3d, ~18:00)  |  *rrule (*2w[1,3])  |  !priority (!a)"
+                            " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3], *m[1,15])  |  !优先级 (如 !a)",
+                            " [syntax] @tag (@work)  |  ~time (~tomorrow, ~+3d, ~18:00)  |  *rrule (*2w[1,3], *m[1,15])  |  !priority (!a)"
                         ),
                         Style::default().fg(self.theme.text_dim),
                     )));

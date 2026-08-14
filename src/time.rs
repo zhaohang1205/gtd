@@ -384,6 +384,7 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
     let mut count: i64 = limit as i64;
     let mut until_ms: Option<i64> = None;
     let mut byday: Vec<chrono::Weekday> = Vec::new();
+    let mut bymonthday: Vec<i32> = Vec::new();
 
     for part in rrule.split(';') {
         if part.is_empty() {
@@ -406,6 +407,15 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
                         "SA" => byday.push(chrono::Weekday::Sat),
                         "SU" => byday.push(chrono::Weekday::Sun),
                         _ => {}
+                    }
+                }
+            }
+            "BYMONTHDAY" => {
+                for d in v.split(',') {
+                    if let Ok(n) = d.trim().parse::<i32>() {
+                        if n != 0 && n.abs() <= 31 && !bymonthday.contains(&n) {
+                            bymonthday.push(n);
+                        }
                     }
                 }
             }
@@ -439,6 +449,36 @@ pub fn rrule_occurrences(rrule: &str, anchor_ms: i64, limit: usize) -> Result<Ve
             current_day += chrono::Duration::days(1);
             if current_day.weekday() == chrono::Weekday::Mon && interval > 1 {
                 current_day += chrono::Duration::weeks(interval - 1);
+            }
+        }
+    } else if freq == "MONTHLY" && !bymonthday.is_empty() {
+        let mut occurrences_found = 0;
+        let mut current_day = cur;
+
+        // Days of month that don't exist (e.g. 31 in February) simply never
+        // match; scan forward day by day until max_iter matches are found.
+        // Day-of-month is compared in the local calendar (anchor is local time);
+        // negative specs count back from the last day of the month (-1 = last).
+        while occurrences_found < max_iter {
+            let local = current_day.with_timezone(&Local);
+            let last_day = days_in_month(local.year(), local.month()) as i32;
+            let day = local.day() as i32;
+            if bymonthday
+                .iter()
+                .any(|spec| month_day_matches(day, last_day, *spec))
+            {
+                let ms = current_day.timestamp_millis();
+                if let Some(u) = until_ms {
+                    if ms > u {
+                        break;
+                    }
+                }
+                out.push(ms);
+                occurrences_found += 1;
+            }
+            current_day += chrono::Duration::days(1);
+            if current_day.with_timezone(&Local).day() == 1 && interval > 1 {
+                current_day = add_months(current_day, interval - 1);
             }
         }
     } else {
@@ -483,6 +523,17 @@ fn days_in_month(y: i32, m: u32) -> u32 {
     let first_next = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
     let this_first = NaiveDate::from_ymd_opt(y, m, 1).unwrap();
     (first_next - this_first).num_days() as u32
+}
+
+/// Whether a calendar `day` (within a month of `last_day` days) matches a
+/// BYMONTHDAY spec: positive specs are absolute (15), negative specs count
+/// back from the last day (-1 = last day, -2 = second-to-last, ...).
+fn month_day_matches(day: i32, last_day: i32, spec: i32) -> bool {
+    if spec > 0 {
+        day == spec
+    } else {
+        day == last_day + 1 + spec
+    }
 }
 
 fn parse_until(v: &str) -> Result<i64> {
@@ -574,5 +625,87 @@ mod tests {
         assert_eq!(parse_time("+3d 15:30").unwrap(), local_ms(base, t));
         assert!(parse_time("+2h").is_ok());
         assert!(parse_time("+1d").is_ok());
+    }
+
+    #[test]
+    fn rrule_monthly_bymonthday() {
+        let anchor = local_ms(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), midnight());
+        let occs = rrule_occurrences("FREQ=MONTHLY;BYMONTHDAY=1,15", anchor, 6).unwrap();
+        let expect = [
+            "2026-01-01 00:00",
+            "2026-01-15 00:00",
+            "2026-02-01 00:00",
+            "2026-02-15 00:00",
+            "2026-03-01 00:00",
+            "2026-03-15 00:00",
+        ];
+        assert_eq!(occs.len(), expect.len());
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(format_local(Some(occs[i])), *e, "occurrence {}", i);
+        }
+    }
+
+    #[test]
+    fn rrule_monthly_bymonthday_interval() {
+        let anchor = local_ms(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), midnight());
+        let occs = rrule_occurrences("FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=1,15", anchor, 4).unwrap();
+        let expect = [
+            "2026-01-01 00:00",
+            "2026-01-15 00:00",
+            "2026-03-01 00:00",
+            "2026-03-15 00:00",
+        ];
+        assert_eq!(occs.len(), expect.len());
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(format_local(Some(occs[i])), *e, "occurrence {}", i);
+        }
+    }
+
+    #[test]
+    fn rrule_monthly_bymonthday_short_months() {
+        // 31 号在 2 月不存在，跳过
+        let anchor = local_ms(NaiveDate::from_ymd_opt(2026, 1, 31).unwrap(), midnight());
+        let occs = rrule_occurrences("FREQ=MONTHLY;BYMONTHDAY=31", anchor, 4).unwrap();
+        let expect = [
+            "2026-01-31 00:00",
+            "2026-03-31 00:00",
+            "2026-05-31 00:00",
+            "2026-07-31 00:00",
+        ];
+        assert_eq!(occs.len(), expect.len());
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(format_local(Some(occs[i])), *e, "occurrence {}", i);
+        }
+    }
+
+    #[test]
+    fn rrule_monthly_bymonthday_negative_last_day() {
+        // 1 号和月末最后一天
+        let anchor = local_ms(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), midnight());
+        let occs = rrule_occurrences("FREQ=MONTHLY;BYMONTHDAY=1,-1", anchor, 6).unwrap();
+        let expect = [
+            "2026-01-01 00:00",
+            "2026-01-31 00:00",
+            "2026-02-01 00:00",
+            "2026-02-28 00:00",
+            "2026-03-01 00:00",
+            "2026-03-31 00:00",
+        ];
+        assert_eq!(occs.len(), expect.len());
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(format_local(Some(occs[i])), *e, "occurrence {}", i);
+        }
+    }
+
+    #[test]
+    fn rrule_monthly_bymonthday_negative_second_last() {
+        // -2 = 倒数第二天，随月份天数变化
+        let anchor = local_ms(NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(), midnight());
+        let occs = rrule_occurrences("FREQ=MONTHLY;BYMONTHDAY=-2", anchor, 3).unwrap();
+        let expect = ["2026-01-30 00:00", "2026-02-27 00:00", "2026-03-30 00:00"];
+        assert_eq!(occs.len(), expect.len());
+        for (i, e) in expect.iter().enumerate() {
+            assert_eq!(format_local(Some(occs[i])), *e, "occurrence {}", i);
+        }
     }
 }

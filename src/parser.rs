@@ -193,11 +193,29 @@ pub fn parse_rrule_shorthand(s: &str) -> String {
         }
     }
 
+    // "m[1,15]" / "2m[1,15]" → 每(隔)N月的指定几号；
     // "2w[1,3]" / "w[mo,we]" / "2w[0,7]" → 每 N 周的指定星期
     if lower.contains('[') && lower.ends_with(']') {
         if let Some(open) = lower.find('[') {
             let head = &lower[..open];
             let body = &lower[open + 1..lower.len() - 1];
+            if let Some(interval) = parse_monthly_head(head) {
+                if let Some(days) = parse_month_days(body) {
+                    let mut out = String::from("FREQ=MONTHLY");
+                    if let Some(iv) = interval {
+                        if iv > 1 {
+                            out.push_str(&format!(";INTERVAL={}", iv));
+                        }
+                    }
+                    let joined = days
+                        .iter()
+                        .map(|d| d.to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    out.push_str(&format!(";BYMONTHDAY={}", joined));
+                    return out;
+                }
+            }
             if let Some(interval) = parse_weekly_head(head) {
                 if let Some(days) = parse_day_codes(body) {
                     if !days.is_empty() {
@@ -268,6 +286,43 @@ fn parse_weekly_head(head: &str) -> Option<Option<u32>> {
         return Some(None);
     }
     num_part.parse::<u32>().ok().map(Some)
+}
+
+/// Parse the head of a bracketed monthly shorthand (`m` or `<N>m`), returning
+/// the interval (None when omitted). An empty head is NOT monthly — a bare
+/// `[1,3]` stays weekly (weekday codes).
+fn parse_monthly_head(head: &str) -> Option<Option<u32>> {
+    let h = head.to_lowercase();
+    let last = h.chars().last()?;
+    if last != 'm' {
+        return None;
+    }
+    let num_part = &h[..h.len() - 1];
+    if num_part.is_empty() {
+        return Some(None);
+    }
+    num_part.parse::<u32>().ok().map(Some)
+}
+
+/// Parse a comma-separated day-of-month list into numbers, deduplicated in
+/// first-appearance order. Supports 1-31 and negative counts from the end of
+/// the month (-1 = last day, -2 = second-to-last, ...). Invalid entries
+/// (0, |n|>31, non-numeric) → None.
+fn parse_month_days(body: &str) -> Option<Vec<i32>> {
+    if body.trim().is_empty() {
+        return None;
+    }
+    let mut out = Vec::new();
+    for part in body.split(',') {
+        let n = part.trim().parse::<i32>().ok()?;
+        if n == 0 || n.abs() > 31 {
+            return None;
+        }
+        if !out.contains(&n) {
+            out.push(n);
+        }
+    }
+    Some(out)
 }
 
 /// Parse a comma-separated weekday list (numbers or names) into RRULE codes,
@@ -381,6 +436,51 @@ mod tests {
         );
         // interval=1 省略
         assert_eq!(parse_rrule_shorthand("1w[5,6]"), "FREQ=WEEKLY;BYDAY=FR,SA");
+    }
+
+    #[test]
+    fn rrule_monthly_bracket_shorthand() {
+        // 每月 1 号、15 号
+        assert_eq!(
+            parse_rrule_shorthand("m[1,15]"),
+            "FREQ=MONTHLY;BYMONTHDAY=1,15"
+        );
+        // 每隔 2 个月的 1 号、15 号
+        assert_eq!(
+            parse_rrule_shorthand("2m[1,15]"),
+            "FREQ=MONTHLY;INTERVAL=2;BYMONTHDAY=1,15"
+        );
+        // 大小写不敏感 + 去重
+        assert_eq!(
+            parse_rrule_shorthand("M[1,1,15]"),
+            "FREQ=MONTHLY;BYMONTHDAY=1,15"
+        );
+        // interval=1 省略
+        assert_eq!(
+            parse_rrule_shorthand("1m[31]"),
+            "FREQ=MONTHLY;BYMONTHDAY=31"
+        );
+        // 负数表示从月末倒数：-1=最后一天
+        assert_eq!(
+            parse_rrule_shorthand("m[1,-1]"),
+            "FREQ=MONTHLY;BYMONTHDAY=1,-1"
+        );
+        assert_eq!(parse_rrule_shorthand("m[-1]"), "FREQ=MONTHLY;BYMONTHDAY=-1");
+        // 无效天数原样返回
+        assert_eq!(parse_rrule_shorthand("m[0]"), "m[0]");
+        assert_eq!(parse_rrule_shorthand("m[32]"), "m[32]");
+        assert_eq!(parse_rrule_shorthand("m[-32]"), "m[-32]");
+        assert_eq!(parse_rrule_shorthand("m[1,x]"), "m[1,x]");
+        // 裸括号无 m 前缀仍是星期
+        assert_eq!(parse_rrule_shorthand("[1,3]"), "FREQ=WEEKLY;BYDAY=MO,WE");
+    }
+
+    #[test]
+    fn rrule_monthly_bracket_shorthand_quick_add() {
+        let q = parse_quick_add("交房租 *m[1,15] @home");
+        assert_eq!(q.title, "交房租");
+        assert_eq!(q.rrule.as_deref(), Some("FREQ=MONTHLY;BYMONTHDAY=1,15"));
+        assert_eq!(q.tags, vec!["home"]);
     }
 
     #[test]
