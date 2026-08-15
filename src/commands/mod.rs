@@ -5,6 +5,7 @@ use crate::model::task::Task;
 use anyhow::Result;
 
 mod alarm;
+mod backup;
 mod capture;
 mod list;
 pub mod notify;
@@ -94,6 +95,8 @@ fn run_inner(cmd: Command, conn: &Connection) -> Result<()> {
             _ => anyhow::bail!("unknown alarm action"),
         },
         Command::Tui => crate::tui::run(conn),
+        Command::Export { file } => backup::run_export(conn, file.as_deref()),
+        Command::Import { file, replace } => backup::run_import(conn, &file, replace),
         Command::Completions { .. } => {
             anyhow::bail!("`gtp completions` is handled before the database is opened")
         }

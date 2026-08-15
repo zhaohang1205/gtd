@@ -1,4 +1,5 @@
 pub mod alarm;
+pub mod backup;
 pub mod notify;
 pub mod pomodoro;
 pub mod settings;

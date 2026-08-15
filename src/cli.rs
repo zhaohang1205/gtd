@@ -151,6 +151,33 @@ pub enum Command {
     },
     /// Launch the interactive TUI
     Tui,
+    /// Export a full backup (tasks, events, tags, settings, pomodoro) to JSON
+    #[command(
+        long_about = "Export every task, event, tag, setting and the pomodoro state \
+        to a single JSON file — a complete restore point for the database.",
+        after_help = "Examples:\n  gtp export\n  gtp export --file ~/backups/gtp.json"
+    )]
+    Export {
+        #[arg(
+            long,
+            value_name = "PATH",
+            help = "Output path (default: gtp-backup-<date>.json)"
+        )]
+        file: Option<String>,
+    },
+    /// Import a backup, merging (or replacing) the database
+    #[command(
+        long_about = "Import a backup created by `gtp export`. By default it merges: \
+        tasks whose id already exists are left untouched, everything else is added. \
+        Pass --replace to wipe the current task data and restore the backup exactly.",
+        after_help = "Examples:\n  gtp import gtp-backup-2026-08-15.json\n  gtp import --replace ~/backups/gtp.json"
+    )]
+    Import {
+        #[arg(value_name = "FILE", help = "Path to a backup JSON file")]
+        file: String,
+        #[arg(long, help = "Wipe current data and restore the backup exactly")]
+        replace: bool,
+    },
     /// Generate shell completion scripts (bash, elvish, fish, powershell, zsh)
     #[command(
         after_help = "Usage:\n  gtp completions bash\n  gtp completions fish\n\nInstall into ~/.bashrc or ~/.config/fish/completions/"

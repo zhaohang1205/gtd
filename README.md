@@ -58,6 +58,8 @@ id-prefix, or an exact title.
 | `gtp schedule <id> [--start TIME] [--end TIME] [--rrule R]` | 排期（可加循环）/ Schedule (+recurrence) |
 | `gtp archive <id>` / `gtp restore <id>` | 软删除 / 恢复 / Soft delete / restore |
 | `gtp tag <id> <name>` / `gtp untag <id> <name>` | 增删标签 / Manage tags |
+| `gtp export [--file PATH]` | 备份到 JSON（任务/事件/标签/设置/番茄钟）· full backup |
+| `gtp import <FILE> [--replace]` | 合并还原；`--replace` 清空后精确还原 · merge / restore |
 | `gtp review` | 周回顾 / Weekly review |
 | `gtp tags` | 标签库 / List tags |
 | `gtp pomo start <id> \| stop \| daemon \| waybar` | 番茄钟 / Pomodoro |
@@ -105,6 +107,20 @@ HH:MM                             当日时刻（已过则视为明日）/ same-
 循环 RRULE（一句话里 `*` 简写）：`FREQ=DAILY|WEEKLY|MONTHLY`、`INTERVAL=2`、
 `BYDAY=SA,SU`、`BYMONTHDAY=1,-1`（-1=月末最后一天）、`COUNT=10` / `UNTIL=YYYY-MM-DD`。
 快速简写：`*d`/`*w`/`*m`/`*y`（每天/周/月/年）、`*2w[1,3]`（每两周周一、周三，1-7=周一至周日，0=周日）、`*m[1,-1]`（每月 1 号和最后一天，负数=月末倒数）、`*m[1,15]`（每月 1 号、15 号），优先级 `!a`/`!b`/`!c`。
+
+## 备份 / Backup
+
+```sh
+gtp export                 # → gtp-backup-2026-08-15.json（当前目录）
+gtp export --file ~/gtd.json
+gtp import gtp-backup-2026-08-15.json          # 合并：已存在 id 整行跳过
+gtp import --replace ~/gtd.json                # 清空当前数据，精确还原
+```
+
+导出文件是一个自包含 JSON（带格式/版本字段），包含全部任务列、`task_events` 时间线、
+标签、设置与番茄钟状态。备份即"拷贝这一个文件"，可放进 git、网盘或 cron 定时导出。
+The backup is one self-contained JSON file — copy it to git/cloud/cron for free
+redundancy. `--replace` is the true restore path; plain `import` merges.
 
 ## 开发 / Development
 

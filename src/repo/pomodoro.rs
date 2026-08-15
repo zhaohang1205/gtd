@@ -35,6 +35,10 @@ pub fn get_state() -> Result<PomoState> {
 }
 
 pub fn save_state(state: &PomoState) -> Result<()> {
+    // 测试隔离：与 get_state 对称，测试里不写真实 ~/.config/gtp/pomo.json。
+    if POMO_IDLE_OVERRIDE.load(Ordering::Relaxed) {
+        return Ok(());
+    }
     let path = pomo_file_path();
     let content = serde_json::to_string_pretty(state)?;
     fs::write(&path, content)?;

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- 完整备份与还原：`gtp export [--file PATH]` 把全部任务（含所有列）、
+  `task_events` 时间线、标签、设置与番茄钟状态打包成一个 JSON 文件
+  （默认 `gtp-backup-<日期>.json`）；`gtp import <FILE> [--replace]` 默认按 id
+  合并（已存在整行跳过），`--replace` 清空任务数据后精确还原。备份是纯文件，
+  可随 git/网盘同步；导入为原始 INSERT，不伪造时间线事件。
 - Permanent delete for archived tasks: `gtp purge <id>` (CLI) and `D` in the
   Archived view (TUI, y/n confirm). Purge only works on archived tasks and
   cascade-deletes their events/tags via `ON DELETE CASCADE`; no event is logged.
