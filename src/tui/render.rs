@@ -45,84 +45,7 @@ impl<'a> AppRender for App<'a> {
             }
         }
 
-        let mut main_area = size;
-        if self.is_reviewing {
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Length(1), Constraint::Min(0)])
-                .split(size);
-
-            let step_names = [
-                "",
-                crate::tr!(self.lang, "清空收件箱", "Clear Inbox"),
-                crate::tr!(self.lang, "追踪等待事项", "Follow up Waiting"),
-                crate::tr!(self.lang, "重估将来/也许", "Re-evaluate Someday"),
-                crate::tr!(self.lang, "检视已完成", "Review Done"),
-            ];
-            let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
-
-            let banner = Paragraph::new(Line::from(Span::styled(
-                crate::tr!(
-                    self.lang,
-                    " 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ",
-                    " 🌟 Weekly Review step {}/4: {} ('R' next, 'Esc' exit) ",
-                    self.review_step,
-                    step_name
-                ),
-                Style::default()
-                    .bg(Color::Cyan)
-                    .fg(self.theme.bg)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            f.render_widget(banner, chunks[0]);
-            main_area = chunks[1];
-        } else if !self.hide_pomo_banner {
-            let pomo = &self.pomo;
-            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
-            let today_active = pomo.last_date.as_deref() == Some(today.as_str());
-
-            if today_active && pomo.today_count > 0 {
-                let chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(1), Constraint::Min(0)])
-                    .split(size);
-
-                let last_title = pomo
-                    .last_completed_task_title
-                    .as_deref()
-                    .unwrap_or(crate::tr!(self.lang, "上一任务", "last task"));
-                let banner = Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        crate::tr!(
-                            self.lang,
-                            " 󰗠 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
-                            " 󰗠 Settled: {} tomatoes today (Streak {})  |  ",
-                            pomo.today_count,
-                            pomo.streak
-                        ),
-                        Style::default()
-                            .fg(self.theme.bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        crate::tr!(
-                            self.lang,
-                            "休息已完成  |  再接再厉? 󰄾 [Space/P] 开启新一轮专注 [{}] ",
-                            "Break done  |  Go again? 󰄾 [Space/P] start a new focus [{}] ",
-                            last_title
-                        ),
-                        Style::default()
-                            .fg(self.theme.bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]))
-                .alignment(ratatui::layout::Alignment::Center)
-                .style(Style::default().bg(self.theme.text_success));
-
-                f.render_widget(banner, chunks[0]);
-                main_area = chunks[1];
-            }
-        }
+        let main_area = self.render_banners(f, size);
 
         self.list_state.select(Some(self.selected));
         let chunks = Layout::default()
@@ -141,337 +64,18 @@ impl<'a> AppRender for App<'a> {
             .split(chunks[0]);
 
         self.render_guide(f, body[0]);
-
         self.render_list(f, body[1]);
         self.render_detail(f, body[2]);
 
-        // 状态栏（单行）：[MODE][视图] + 内容区(消息 / F2 提示 / 全局条) | [gtp]
-        let mode_str = match self.mode {
-            Mode::Normal => " NORMAL ",
-            Mode::Visual => " VISUAL ",
-            _ => " INSERT ",
-        };
-        let mode_bg = match self.mode {
-            Mode::Normal => self.theme.text_success,
-            Mode::Visual => self.theme.accent,
-            _ => self.theme.text_urgent,
-        };
-        let mode_fg = self.theme.bg;
-
-        let status_layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Min(0), Constraint::Length(5)])
-            .split(chunks[1]);
-
-        // 内容区三态：消息 > F2 关闭提示 > 全局键条。
-        let mut content_spans: Vec<Span> = Vec::new();
-        if !self.status_message.is_empty() {
-            content_spans.push(Span::styled(
-                format!(" {}", self.status_message),
-                Style::default()
-                    .fg(self.theme.status_fg)
-                    .bg(self.theme.status_bg),
-            ));
-        } else if !self.show_shortcut_bar {
-            content_spans.push(Span::styled(
-                crate::tr!(
-                    self.lang,
-                    "按 F2 显示快捷键条",
-                    "Press F2 to show shortcut bar"
-                ),
-                Style::default()
-                    .fg(self.theme.text_dim)
-                    .bg(self.theme.status_bg),
-            ));
-        } else {
-            content_spans.push(Span::styled(
-                " ⌘ ",
-                Style::default()
-                    .fg(self.theme.accent)
-                    .bg(self.theme.status_bg)
-                    .add_modifier(Modifier::BOLD),
-            ));
-            let items = status_strip(self.lang);
-            for (i, (k, d)) in items.iter().enumerate() {
-                // 两种颜色交替，视觉上间隔开每一条。
-                let key_color = if i % 2 == 0 {
-                    self.theme.accent
-                } else {
-                    Color::Cyan
-                };
-                content_spans.push(Span::styled(
-                    format!("{:<3} {}", k, d),
-                    Style::default()
-                        .fg(key_color)
-                        .bg(self.theme.status_bg)
-                        .add_modifier(Modifier::BOLD),
-                ));
-                if i + 1 < items.len() {
-                    content_spans.push(Span::styled(
-                        " · ",
-                        Style::default()
-                            .fg(self.theme.text_dim)
-                            .bg(self.theme.status_bg),
-                    ));
-                }
-            }
-        }
-
-        let mut status_spans = vec![
-            Span::styled(
-                mode_str,
-                Style::default()
-                    .fg(mode_fg)
-                    .bg(mode_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!(" {} ", super::view_label(self.lang, self.view)),
-                Style::default()
-                    .fg(self.theme.fg)
-                    .bg(self.theme.status_bg)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ];
-        status_spans.extend(content_spans);
-        f.render_widget(
-            Paragraph::new(Line::from(status_spans))
-                .style(Style::default().bg(self.theme.status_bg)),
-            status_layout[0],
-        );
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                " gtp ",
-                Style::default()
-                    .fg(self.theme.bg)
-                    .bg(self.theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ))
-            .alignment(Alignment::Right),
-            status_layout[1],
-        );
+        self.render_status_bar(f, chunks[1]);
 
         if self.mode != Mode::Normal
             && self.mode != Mode::ConfirmArchive
             && self.mode != Mode::ConfirmPurge
         {
-            let title = match self.mode {
-                Mode::Search => {
-                    crate::tr!(
-                        self.lang,
-                        " 搜索任务 (标题 / 备注) ",
-                        " Search Tasks (Title / Notes) "
-                    )
-                }
-                Mode::EditingTitle => crate::tr!(self.lang, " 编辑标题 ", " Edit title "),
-                Mode::Capturing => {
-                    if self.organizing_id.is_some() {
-                        crate::tr!(
-                            self.lang,
-                            " 组织: 编辑 标题 @标签 ~时间 *周期 (空/Esc 跳过) ",
-                            " Organize: edit title @tags ~time *rrule (empty/Esc to skip) "
-                        )
-                    } else {
-                        crate::tr!(
-                            self.lang,
-                            " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
-                            " Quick capture (@tag, Tab to complete: home, work, errands, quick, focus...) "
-                        )
-                    }
-                }
-                Mode::Tagging => crate::tr!(
-                    self.lang,
-                    " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) ",
-                    " Add tags [Tab to complete] (presets: home, work, errands, quick, focus...) "
-                ),
-                Mode::WaitingWho => {
-                    crate::tr!(self.lang, " 等待谁/什么? ", " Waiting for who/what? ")
-                }
-                Mode::WaitingWhen => crate::tr!(
-                    self.lang,
-                    " 提醒时间? (如 +1d, tomorrow 10:00) ",
-                    " Reminder time? (e.g. +1d, tomorrow 10:00) "
-                ),
-                Mode::ChecklistAdding => {
-                    crate::tr!(self.lang, " 新增检查单 ", " Add checklist item ")
-                }
-                Mode::FilteringTag => {
-                    crate::tr!(self.lang, " 过滤标签 (情境) ", " Filter by tag (Context) ")
-                }
-                Mode::CreatingTag => crate::tr!(
-                    self.lang,
-                    " 新增自定义标签 (输入标签名称，按 Enter 保存) ",
-                    " Create custom tag (enter name, Enter to save) "
-                ),
-                Mode::EditingDue => crate::tr!(
-                    self.lang,
-                    " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
-                    " Due time? (empty=clear, e.g. +3d, tomorrow 10:00) "
-                ),
-                Mode::EditingRrule => crate::tr!(
-                    self.lang,
-                    " 循环规则? (空=清除, 如 *2w[1,3] 每两周周一周三, 或 FREQ=WEEKLY;BYDAY=SA,SU) ",
-                    " Recurrence rule? (empty=clear, e.g. *2w[1,3] or FREQ=WEEKLY;BYDAY=SA,SU) "
-                ),
-                Mode::EditingDelegated => {
-                    crate::tr!(
-                        self.lang,
-                        " 委派给? (空=清除) ",
-                        " Delegated to? (empty=clear) "
-                    )
-                }
-                Mode::ConfiguringPomo => crate::tr!(
-                    self.lang,
-                    " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) ",
-                    " Custom pomodoro lengths (format: work;short;long, e.g. 25;5;15) "
-                ),
-                Mode::Normal | Mode::Visual | Mode::ConfirmArchive | Mode::ConfirmPurge => "",
-            };
-
-            let mut text_lines: Vec<Line> = Vec::new();
-            let width = if self.mode == Mode::Capturing { 70 } else { 50 };
-
-            if self.mode == Mode::Capturing {
-                text_lines.push(self.capture_input_line());
-                text_lines.push(Line::from(""));
-                if self.input.trim().is_empty() {
-                    text_lines.push(Line::from(Span::styled(
-                        crate::tr!(
-                            self.lang,
-                            " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3], *m[1,15])  |  !优先级 (如 !a)",
-                            " [syntax] @tag (@work)  |  ~time (~tomorrow, ~+3d, ~18:00)  |  *rrule (*2w[1,3], *m[1,15])  |  !priority (!a)"
-                        ),
-                        Style::default().fg(self.theme.text_dim),
-                    )));
-                } else {
-                    let parsed = parse_quick_add(&self.input);
-                    let tokens = tokenize_quick_add(&self.input);
-                    if !parsed.title.is_empty() {
-                        text_lines.push(Line::from(vec![
-                            Span::styled(
-                                crate::tr!(self.lang, " 标题: ", " Title: "),
-                                Style::default().fg(self.theme.text_dim),
-                            ),
-                            Span::raw(parsed.title.clone()),
-                        ]));
-                    }
-                    if !parsed.tags.is_empty() {
-                        let mut spans = vec![Span::styled(
-                            crate::tr!(self.lang, " 标签: ", " Tags: "),
-                            Style::default().fg(self.theme.text_dim),
-                        )];
-                        for (i, tag) in parsed.tags.iter().enumerate() {
-                            spans.push(Span::styled(
-                                format!("@{}", tag),
-                                Style::default()
-                                    .fg(self.theme.hl_fg)
-                                    .add_modifier(Modifier::BOLD),
-                            ));
-                            if i + 1 < parsed.tags.len() {
-                                spans.push(Span::raw(" "));
-                            }
-                        }
-                        text_lines.push(Line::from(spans));
-                    }
-                    if let Some(ref ts) = parsed.time_str {
-                        let (resolved_text, resolved_style) = match time::parse_time(ts) {
-                            Ok(ms) => (
-                                time::format_local(Some(ms)),
-                                Style::default().fg(self.theme.text_dim),
-                            ),
-                            Err(_) => (
-                                crate::tr!(self.lang, "[无效]", "[invalid]").to_string(),
-                                Style::default().fg(self.theme.text_urgent),
-                            ),
-                        };
-                        text_lines.push(Line::from(vec![
-                            Span::styled(
-                                crate::tr!(self.lang, " 时间: ", " Time: "),
-                                Style::default().fg(self.theme.text_dim),
-                            ),
-                            Span::styled(
-                                format!("~{}", ts),
-                                Style::default().fg(self.theme.text_success),
-                            ),
-                            Span::raw(" → "),
-                            Span::styled(resolved_text, resolved_style),
-                        ]));
-                    }
-                    if let Some(raw) = tokens
-                        .iter()
-                        .rev()
-                        .find(|t| t.kind == QuickAddKind::Rrule)
-                        .map(|t| t.text[1..].to_string())
-                    {
-                        let resolved = parse_rrule_shorthand(&raw);
-                        text_lines.push(Line::from(vec![
-                            Span::styled(
-                                crate::tr!(self.lang, " 循环: ", " Rrule: "),
-                                Style::default().fg(self.theme.text_dim),
-                            ),
-                            Span::styled(
-                                format!("*{}", raw),
-                                Style::default().fg(self.theme.rrule_fg),
-                            ),
-                            Span::raw(" → "),
-                            Span::styled(resolved, Style::default().fg(self.theme.text_dim)),
-                        ]));
-                    }
-                    if let Some(p) = &parsed.priority {
-                        let letter = priority_letter(p).unwrap_or('?');
-                        let color = crate::tui::ui::priority_color(p).unwrap_or(self.theme.hl_fg);
-                        text_lines.push(Line::from(vec![
-                            Span::styled(
-                                crate::tr!(self.lang, " 优先级: ", " Priority: "),
-                                Style::default().fg(self.theme.text_dim),
-                            ),
-                            Span::styled(
-                                format!("!{}", letter),
-                                Style::default().fg(self.theme.text_success),
-                            ),
-                            Span::raw(" → "),
-                            Span::styled(format!("@{}", p), Style::default().fg(color)),
-                        ]));
-                    }
-                }
-            } else {
-                text_lines.push(Line::from(format!(" {}_", self.input)));
-            }
-
-            let height = text_lines.len() as u16 + 2;
-
-            if self.show_syntax {
-                // 当处于编辑/录入模式且按了 Ctrl+P 双开时，编辑输入框居左靠上绘制
-                let left_area = Rect {
-                    x: size.width / 20,
-                    y: size.height / 10,
-                    width: (size.width * 42 / 100).min(65),
-                    height,
-                };
-                f.render_widget(ratatui::widgets::Clear, left_area);
-                let block = Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(if self.pane == Pane::Right {
-                        self.theme.border_active
-                    } else {
-                        self.theme.border_inactive
-                    }));
-                f.render_widget(Paragraph::new(text_lines).block(block), left_area);
-            } else {
-                let area = self.centered_rect(width, height, size);
-                f.render_widget(ratatui::widgets::Clear, area);
-                let block = Block::default()
-                    .title(title)
-                    .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(self.theme.accent));
-                f.render_widget(Paragraph::new(text_lines).block(block), area);
-            }
+            self.render_input_overlay(f, size);
         }
+
         if self.show_syntax {
             // 当 show_syntax 为 true 时，如果处于输入/编辑模式，则将语法面板放右半屏实现“左右双开”；否则居中
             let syntax_area = if self.mode.is_input() {
@@ -492,92 +96,8 @@ impl<'a> AppRender for App<'a> {
             self.render_help_drawer(f, help_area);
         }
 
-        if let Some(ref popup) = self.popup {
-            match popup {
-                crate::tui::app::Popup::TodayTasks(tasks) => {
-                    let mut lines = vec![Line::from(crate::tr!(
-                        self.lang,
-                        "今日有以下任务需要完成:",
-                        "Tasks to complete today:"
-                    ))];
-                    lines.push(Line::from(""));
-                    for t in tasks.iter().take(10) {
-                        lines.push(Line::from(format!(" - {}", t)));
-                    }
-                    if tasks.len() > 10 {
-                        lines.push(Line::from(crate::tr!(
-                            self.lang,
-                            "   ... 等 {} 个任务",
-                            "   ... and {} more",
-                            tasks.len()
-                        )));
-                    }
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        crate::tr!(
-                            self.lang,
-                            " [按 Enter 或 Esc 键关闭] ",
-                            " [Press Enter or Esc to close] "
-                        ),
-                        Style::default().fg(self.theme.text_dim),
-                    )));
-
-                    let area = self.centered_rect(50, 15, size);
-                    f.render_widget(ratatui::widgets::Clear, area);
-                    let block = Block::default()
-                        .title(crate::tr!(
-                            self.lang,
-                            " 📅 今日任务概览 ",
-                            " 📅 Today's Tasks "
-                        ))
-                        .borders(Borders::ALL)
-                        .border_set(border::ROUNDED)
-                        .border_style(Style::default().fg(self.theme.accent));
-                    f.render_widget(
-                        Paragraph::new(lines)
-                            .block(block)
-                            .alignment(Alignment::Center),
-                        area,
-                    );
-                }
-                crate::tui::app::Popup::TaskDueNow(_, title) => {
-                    let mut lines = vec![Line::from(crate::tr!(
-                        self.lang,
-                        "有任务已到期，需要立即处理：",
-                        "A task is due now, handle it now:"
-                    ))];
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        format!(" 「{}」 ", title),
-                        Style::default()
-                            .fg(self.theme.text_urgent)
-                            .add_modifier(Modifier::BOLD),
-                    )));
-                    lines.push(Line::from(""));
-                    lines.push(Line::from(Span::styled(
-                        crate::tr!(
-                            self.lang,
-                            " [Enter] 一键进入番茄钟  |  [Esc] 忽略 ",
-                            " [Enter] start pomodoro  |  [Esc] dismiss "
-                        ),
-                        Style::default().fg(self.theme.text_dim),
-                    )));
-
-                    let area = self.centered_rect(50, 10, size);
-                    f.render_widget(ratatui::widgets::Clear, area);
-                    let block = Block::default()
-                        .title(crate::tr!(self.lang, " ⏰ 任务提醒! ", " ⏰ Task due! "))
-                        .borders(Borders::ALL)
-                        .border_set(border::ROUNDED)
-                        .border_style(Style::default().fg(self.theme.text_urgent));
-                    f.render_widget(
-                        Paragraph::new(lines)
-                            .block(block)
-                            .alignment(Alignment::Center),
-                        area,
-                    );
-                }
-            }
+        if self.popup.is_some() {
+            self.render_popups(f, size);
         }
     }
 
@@ -664,79 +184,14 @@ impl<'a> AppRender for App<'a> {
         );
 
         // ── 2. Canvas 圆形进度环 (点阵图案) ──
-        let canvas_area = rows[2];
-        let cw = canvas_area.width as f64;
-        let ch = canvas_area.height as f64;
-        let y_range = (100.0 * ch * 2.0 / cw).max(10.0);
-        let cx_c = 50.0_f64;
-        let cy_c = y_range / 2.0;
-        let max_r = cy_c.min(50.0) * 0.88;
-        let outer_r = max_r;
-        let inner_r = max_r * 0.68;
-
-        let ef = elapsed_fraction;
-        let rc = ring_color;
-        let dc = dim_color;
-        let bgc = bg_color;
-
-        let canvas = Canvas::default()
-            .marker(ratatui::symbols::Marker::Braille)
-            .x_bounds([0.0, 100.0])
-            .y_bounds([0.0, y_range])
-            .background_color(bgc)
-            .paint(move |ctx| {
-                let steps = 1440_usize;
-                let ring_steps = ((outer_r - inner_r) * 3.0) as usize + 1;
-
-                let mut rem_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
-                let mut ela_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
-
-                for i in 0..steps {
-                    let angle_deg = i as f64 * 360.0 / steps as f64;
-                    let angle_rad = (90.0_f64 - angle_deg).to_radians();
-                    let frac = angle_deg / 360.0;
-
-                    for ri in 0..=ring_steps {
-                        let r = inner_r + ri as f64 * (outer_r - inner_r) / ring_steps as f64;
-                        let x = cx_c + r * angle_rad.cos();
-                        let y = cy_c + r * angle_rad.sin();
-                        if !(0.5..=99.5).contains(&x) || y < 0.5 || y > y_range - 0.5 {
-                            continue;
-                        }
-                        if frac >= ef {
-                            rem_pts.push((x, y));
-                        } else {
-                            ela_pts.push((x, y));
-                        }
-                    }
-                }
-                ctx.draw(&Points {
-                    coords: &ela_pts,
-                    color: dc,
-                });
-                ctx.draw(&Points {
-                    coords: &rem_pts,
-                    color: rc,
-                });
-
-                // 外围刻度点
-                let mut tick_pts = vec![];
-                for t in 0..12 {
-                    let deg = t as f64 * 30.0;
-                    let rad = (90.0_f64 - deg).to_radians();
-                    for ri in 0..=3 {
-                        let r = outer_r + 2.0 + ri as f64 * 0.8;
-                        let x = cx_c + r * rad.cos();
-                        let y = cy_c + r * rad.sin();
-                        tick_pts.push((x, y));
-                    }
-                }
-                ctx.draw(&Points {
-                    coords: &tick_pts,
-                    color: Color::Rgb(85, 85, 85),
-                });
-            });
-        f.render_widget(canvas, canvas_area);
+        self.render_focus_ring(
+            f,
+            rows[2],
+            elapsed_fraction,
+            ring_color,
+            dim_color,
+            bg_color,
+        );
 
         // ── 3. 大数字倒计时 (秒针呼吸联动) ──
         let blink = secs % 2 == 0;
@@ -861,7 +316,815 @@ impl<'a> AppRender for App<'a> {
                 " 语法说明指南 (Ctrl+P) ",
                 " Syntax guide (Ctrl+P) "
             ));
-        let syntax = vec![
+        let syntax = self.syntax_lines();
+        let para = Paragraph::new(syntax)
+            .block(syntax_block)
+            .wrap(ratatui::widgets::Wrap { trim: false });
+        f.render_widget(para, area);
+    }
+
+    fn centered_rect(&self, percent_x: u16, height: u16, r: Rect) -> Rect {
+        let popup_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(r.height.saturating_sub(height) / 2),
+                Constraint::Length(height),
+                Constraint::Min(0),
+            ])
+            .split(r);
+
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ])
+            .split(popup_layout[1])[1]
+    }
+
+    fn render_guide(&self, f: &mut ratatui::Frame, area: Rect) {
+        let lines = self.guide_lines(area);
+        let border_color = if self.pane == Pane::Left {
+            self.theme.accent
+        } else {
+            self.theme.text_dim
+        };
+        f.render_widget(
+            Paragraph::new(lines).block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(border_color))
+                    .title(crate::tr!(self.lang, " 引导 ", " Guide ")),
+            ),
+            area,
+        );
+    }
+
+    fn render_list(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let border_color = if self.pane == Pane::Center {
+            self.theme.accent
+        } else {
+            self.theme.text_dim
+        };
+        let items = build_list_items(self);
+        let title = crate::tr!(
+            self.lang,
+            " 任务 · {}{} ",
+            " Tasks · {}{} ",
+            super::view_label(self.lang, self.view),
+            if let Some(ref tf) = self.tag_filter {
+                format!(" [@{}]", tf)
+            } else {
+                String::new()
+            }
+        );
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .padding(ratatui::widgets::Padding::horizontal(1))
+                    .border_style(Style::default().fg(border_color))
+                    .title(title),
+            )
+            .highlight_style(if self.theme.is_dark {
+                // 暗色主题：活动行深蓝背景（与标签亮蓝区分），不覆盖任务文本原色。
+                if self.pane == Pane::Center {
+                    Style::default().bg(self.theme.row_active_bg)
+                } else {
+                    Style::default().bg(self.theme.hl_bg)
+                }
+            } else if self.pane == Pane::Center {
+                Style::default()
+                    .bg(self.theme.hl_bg)
+                    .fg(self.theme.hl_fg)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().bg(self.theme.hl_bg)
+            });
+        f.render_stateful_widget(list, area, &mut self.list_state);
+    }
+
+    fn render_detail(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
+        f.render_widget(ratatui::widgets::Clear, area);
+        let border_color = if self.pane == Pane::Right {
+            self.theme.accent
+        } else {
+            self.theme.text_dim
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_set(border::ROUNDED)
+            .padding(ratatui::widgets::Padding::horizontal(1))
+            .border_style(Style::default().fg(border_color))
+            .title(crate::tr!(self.lang, " 任务详情 ", " Task Details "));
+
+        match &self.detail {
+            None => {
+                let empty_para = Paragraph::new(crate::tr!(
+                    self.lang,
+                    "\n\n󰋔\n\n未选中任务",
+                    "\n\n󰋔\n\nNo task selected"
+                ))
+                .alignment(Alignment::Center)
+                .style(
+                    Style::default()
+                        .fg(self.theme.text_dim)
+                        .add_modifier(Modifier::ITALIC),
+                )
+                .block(block);
+                f.render_widget(empty_para, area);
+            }
+            Some(d) => {
+                let lines = self.detail_lines(d, area.width);
+                let para = Paragraph::new(lines)
+                    .block(block)
+                    .wrap(ratatui::widgets::Wrap { trim: false });
+                f.render_widget(para, area);
+            }
+        }
+    }
+}
+
+// ── 大数字字体辅助（5 行 × 4 列，纯 █ 字符）──
+
+fn big_digit_rows(c: char, blink: bool) -> [&'static str; 5] {
+    match c {
+        '0' => [" ██ ", "█  █", "█  █", "█  █", " ██ "],
+        '1' => [" ▐█ ", " ██ ", "  █ ", "  █ ", " ███"],
+        '2' => [" ██ ", "   █", " ██ ", "█   ", "████"],
+        '3' => ["███ ", "   █", " ██ ", "   █", "███ "],
+        '4' => ["█  █", "█  █", "████", "   █", "   █"],
+        '5' => ["████", "█   ", "███ ", "   █", "███ "],
+        '6' => [" ██ ", "█   ", "███ ", "█  █", " ██ "],
+        '7' => ["████", "   █", "  █ ", " █  ", " █  "],
+        '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
+        '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
+        ':' if blink => ["    ", " ██ ", "    ", " ██ ", "    "],
+        ':' => ["    ", "    ", "    ", "    ", "    "],
+        _ => ["    ", "    ", "    ", "    ", "    "],
+    }
+}
+
+/// 将形如 "23:45" 的字符串渲染为 5 行大数字（每行是一个 Span）。
+fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'static>> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut rows: [String; 5] = Default::default();
+    for &c in &chars {
+        let digit = big_digit_rows(c, blink);
+        for (i, part) in digit.iter().enumerate() {
+            rows[i].push_str(part);
+            rows[i].push(' '); // 字符间距
+        }
+    }
+    rows.into_iter()
+        .map(|row| {
+            Line::from(Span::styled(
+                row,
+                Style::default()
+                    .fg(color)
+                    .bg(bg)
+                    .add_modifier(Modifier::BOLD),
+            ))
+        })
+        .collect()
+}
+
+impl<'a> App<'a> {
+    fn capture_input_line(&self) -> Line<'a> {
+        let input = &self.input;
+        let mut spans: Vec<Span<'a>> = Vec::new();
+        spans.push(Span::raw(" "));
+        let mut prev = 0usize;
+        for tok in tokenize_quick_add(input) {
+            if tok.start > prev {
+                spans.push(Span::raw(input[prev..tok.start].to_string()));
+            }
+            let style = match tok.kind {
+                QuickAddKind::Tag => Style::default()
+                    .fg(self.theme.hl_fg)
+                    .add_modifier(Modifier::BOLD),
+                QuickAddKind::Time => Style::default().fg(self.theme.text_success),
+                QuickAddKind::Rrule => Style::default().fg(self.theme.rrule_fg),
+                QuickAddKind::Priority => {
+                    let tag =
+                        crate::parser::priority_tag(&input[tok.start + 1..tok.end]).unwrap_or("");
+                    Style::default()
+                        .fg(crate::tui::ui::priority_color(tag).unwrap_or(self.theme.hl_fg))
+                        .add_modifier(Modifier::BOLD)
+                }
+                QuickAddKind::Title => Style::default(),
+            };
+            spans.push(Span::styled(input[tok.start..tok.end].to_string(), style));
+            prev = tok.end;
+        }
+        if prev < input.len() {
+            spans.push(Span::raw(input[prev..].to_string()));
+        }
+        spans.push(Span::raw("_"));
+        Line::from(spans)
+    }
+}
+
+impl<'a> App<'a> {
+    /// 顶部横幅：每周回顾进度条，或番茄“成就结清”提示。返回剩余主区域。
+    fn render_banners(&mut self, f: &mut Frame, size: Rect) -> Rect {
+        let mut main_area = size;
+        if self.is_reviewing {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)])
+                .split(size);
+
+            let step_names = [
+                "",
+                crate::tr!(self.lang, "清空收件箱", "Clear Inbox"),
+                crate::tr!(self.lang, "追踪等待事项", "Follow up Waiting"),
+                crate::tr!(self.lang, "重估将来/也许", "Re-evaluate Someday"),
+                crate::tr!(self.lang, "检视已完成", "Review Done"),
+            ];
+            let step_name = step_names.get(self.review_step as usize).unwrap_or(&"");
+
+            let banner = Paragraph::new(Line::from(Span::styled(
+                crate::tr!(
+                    self.lang,
+                    " 🌟 每周回顾 第 {}/4 步: {} (按 'R' 进入下一步, 'Esc' 退出) ",
+                    " 🌟 Weekly Review step {}/4: {} ('R' next, 'Esc' exit) ",
+                    self.review_step,
+                    step_name
+                ),
+                Style::default()
+                    .bg(Color::Cyan)
+                    .fg(self.theme.bg)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            f.render_widget(banner, chunks[0]);
+            main_area = chunks[1];
+        } else if !self.hide_pomo_banner {
+            let pomo = &self.pomo;
+            let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+            let today_active = pomo.last_date.as_deref() == Some(today.as_str());
+
+            if today_active && pomo.today_count > 0 {
+                let chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Min(0)])
+                    .split(size);
+
+                let last_title = pomo
+                    .last_completed_task_title
+                    .as_deref()
+                    .unwrap_or(crate::tr!(self.lang, "上一任务", "last task"));
+                let banner = Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        crate::tr!(
+                            self.lang,
+                            " 󰗠 成就结清: 今日已积 {} 个番茄 (Streak {} 连击!)  |  ",
+                            " 󰗠 Settled: {} tomatoes today (Streak {})  |  ",
+                            pomo.today_count,
+                            pomo.streak
+                        ),
+                        Style::default()
+                            .fg(self.theme.bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        crate::tr!(
+                            self.lang,
+                            "休息已完成  |  再接再厉? 󰄾 [Space/P] 开启新一轮专注 [{}] ",
+                            "Break done  |  Go again? 󰄾 [Space/P] start a new focus [{}] ",
+                            last_title
+                        ),
+                        Style::default()
+                            .fg(self.theme.bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]))
+                .alignment(ratatui::layout::Alignment::Center)
+                .style(Style::default().bg(self.theme.text_success));
+
+                f.render_widget(banner, chunks[0]);
+                main_area = chunks[1];
+            }
+        }
+        main_area
+    }
+
+    /// 状态栏（单行）：[MODE][视图] + 内容区(消息 / F2 提示 / 全局条) | [gtp]。
+    fn render_status_bar(&mut self, f: &mut Frame, area: Rect) {
+        let mode_str = match self.mode {
+            Mode::Normal => " NORMAL ",
+            Mode::Visual => " VISUAL ",
+            _ => " INSERT ",
+        };
+        let mode_bg = match self.mode {
+            Mode::Normal => self.theme.text_success,
+            Mode::Visual => self.theme.accent,
+            _ => self.theme.text_urgent,
+        };
+        let mode_fg = self.theme.bg;
+
+        let status_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(5)])
+            .split(area);
+
+        // 内容区三态：消息 > F2 关闭提示 > 全局键条。
+        let mut content_spans: Vec<Span> = Vec::new();
+        if !self.status_message.is_empty() {
+            content_spans.push(Span::styled(
+                format!(" {}", self.status_message),
+                Style::default()
+                    .fg(self.theme.status_fg)
+                    .bg(self.theme.status_bg),
+            ));
+        } else if !self.show_shortcut_bar {
+            content_spans.push(Span::styled(
+                crate::tr!(
+                    self.lang,
+                    "按 F2 显示快捷键条",
+                    "Press F2 to show shortcut bar"
+                ),
+                Style::default()
+                    .fg(self.theme.text_dim)
+                    .bg(self.theme.status_bg),
+            ));
+        } else {
+            content_spans.push(Span::styled(
+                " ⌘ ",
+                Style::default()
+                    .fg(self.theme.accent)
+                    .bg(self.theme.status_bg)
+                    .add_modifier(Modifier::BOLD),
+            ));
+            let items = status_strip(self.lang);
+            for (i, (k, d)) in items.iter().enumerate() {
+                // 两种颜色交替，视觉上间隔开每一条。
+                let key_color = if i % 2 == 0 {
+                    self.theme.accent
+                } else {
+                    Color::Cyan
+                };
+                content_spans.push(Span::styled(
+                    format!("{:<3} {}", k, d),
+                    Style::default()
+                        .fg(key_color)
+                        .bg(self.theme.status_bg)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                if i + 1 < items.len() {
+                    content_spans.push(Span::styled(
+                        " · ",
+                        Style::default()
+                            .fg(self.theme.text_dim)
+                            .bg(self.theme.status_bg),
+                    ));
+                }
+            }
+        }
+
+        let mut status_spans = vec![
+            Span::styled(
+                mode_str,
+                Style::default()
+                    .fg(mode_fg)
+                    .bg(mode_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!(" {} ", super::view_label(self.lang, self.view)),
+                Style::default()
+                    .fg(self.theme.fg)
+                    .bg(self.theme.status_bg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+        status_spans.extend(content_spans);
+        f.render_widget(
+            Paragraph::new(Line::from(status_spans))
+                .style(Style::default().bg(self.theme.status_bg)),
+            status_layout[0],
+        );
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                " gtp ",
+                Style::default()
+                    .fg(self.theme.bg)
+                    .bg(self.theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ))
+            .alignment(Alignment::Right),
+            status_layout[1],
+        );
+    }
+
+    /// 输入/编辑模式的弹层：标题 + 文本行（快速录入带实时解析预览）。
+    fn render_input_overlay(&mut self, f: &mut Frame, size: Rect) {
+        let title = match self.mode {
+            Mode::Search => {
+                crate::tr!(
+                    self.lang,
+                    " 搜索任务 (标题 / 备注) ",
+                    " Search Tasks (Title / Notes) "
+                )
+            }
+            Mode::EditingTitle => crate::tr!(self.lang, " 编辑标题 ", " Edit title "),
+            Mode::Capturing => {
+                if self.organizing_id.is_some() {
+                    crate::tr!(
+                        self.lang,
+                        " 组织: 编辑 标题 @标签 ~时间 *周期 (空/Esc 跳过) ",
+                        " Organize: edit title @tags ~time *rrule (empty/Esc to skip) "
+                    )
+                } else {
+                    crate::tr!(
+                        self.lang,
+                        " 快速录入 (支持 @标签 及 Tab 补全: home, work, errands, quick, focus...) ",
+                        " Quick capture (@tag, Tab to complete: home, work, errands, quick, focus...) "
+                    )
+                }
+            }
+            Mode::Tagging => crate::tr!(
+                self.lang,
+                " 添加标签 [支持 Tab 补全] (预设: home, work, errands, quick, focus...) ",
+                " Add tags [Tab to complete] (presets: home, work, errands, quick, focus...) "
+            ),
+            Mode::WaitingWho => {
+                crate::tr!(self.lang, " 等待谁/什么? ", " Waiting for who/what? ")
+            }
+            Mode::WaitingWhen => crate::tr!(
+                self.lang,
+                " 提醒时间? (如 +1d, tomorrow 10:00) ",
+                " Reminder time? (e.g. +1d, tomorrow 10:00) "
+            ),
+            Mode::ChecklistAdding => {
+                crate::tr!(self.lang, " 新增检查单 ", " Add checklist item ")
+            }
+            Mode::FilteringTag => {
+                crate::tr!(self.lang, " 过滤标签 (情境) ", " Filter by tag (Context) ")
+            }
+            Mode::CreatingTag => crate::tr!(
+                self.lang,
+                " 新增自定义标签 (输入标签名称，按 Enter 保存) ",
+                " Create custom tag (enter name, Enter to save) "
+            ),
+            Mode::EditingDue => crate::tr!(
+                self.lang,
+                " 截止时间? (空=清除, 如 +3d, tomorrow 10:00) ",
+                " Due time? (empty=clear, e.g. +3d, tomorrow 10:00) "
+            ),
+            Mode::EditingRrule => crate::tr!(
+                self.lang,
+                " 循环规则? (空=清除, 如 *2w[1,3] 每两周周一周三, 或 FREQ=WEEKLY;BYDAY=SA,SU) ",
+                " Recurrence rule? (empty=clear, e.g. *2w[1,3] or FREQ=WEEKLY;BYDAY=SA,SU) "
+            ),
+            Mode::EditingDelegated => {
+                crate::tr!(
+                    self.lang,
+                    " 委派给? (空=清除) ",
+                    " Delegated to? (empty=clear) "
+                )
+            }
+            Mode::ConfiguringPomo => crate::tr!(
+                self.lang,
+                " 自定义番茄钟时长 (格式: 工作分钟;短休分钟;长休分钟, 如 25;5;15) ",
+                " Custom pomodoro lengths (format: work;short;long, e.g. 25;5;15) "
+            ),
+            Mode::Normal | Mode::Visual | Mode::ConfirmArchive | Mode::ConfirmPurge => "",
+        };
+
+        let mut text_lines: Vec<Line> = Vec::new();
+        let width = if self.mode == Mode::Capturing { 70 } else { 50 };
+
+        if self.mode == Mode::Capturing {
+            text_lines.push(self.capture_input_line());
+            text_lines.push(Line::from(""));
+            if self.input.trim().is_empty() {
+                text_lines.push(Line::from(Span::styled(
+                    crate::tr!(
+                        self.lang,
+                        " [语法] @标签 (如 @work)  |  ~时间 (如 ~tomorrow, ~+3d, ~18:00)  |  *循环 (如 *2w[1,3], *m[1,15])  |  !优先级 (如 !a)",
+                        " [syntax] @tag (@work)  |  ~time (~tomorrow, ~+3d, ~18:00)  |  *rrule (*2w[1,3], *m[1,15])  |  !priority (!a)"
+                    ),
+                    Style::default().fg(self.theme.text_dim),
+                )));
+            } else {
+                text_lines.extend(self.capture_preview_lines());
+            }
+        } else {
+            text_lines.push(Line::from(format!(" {}_", self.input)));
+        }
+
+        let height = text_lines.len() as u16 + 2;
+
+        if self.show_syntax {
+            // 当处于编辑/录入模式且按了 Ctrl+P 双开时，编辑输入框居左靠上绘制
+            let left_area = Rect {
+                x: size.width / 20,
+                y: size.height / 10,
+                width: (size.width * 42 / 100).min(65),
+                height,
+            };
+            f.render_widget(ratatui::widgets::Clear, left_area);
+            let block = Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_set(border::ROUNDED)
+                .padding(ratatui::widgets::Padding::horizontal(1))
+                .border_style(Style::default().fg(if self.pane == Pane::Right {
+                    self.theme.border_active
+                } else {
+                    self.theme.border_inactive
+                }));
+            f.render_widget(Paragraph::new(text_lines).block(block), left_area);
+        } else {
+            let area = self.centered_rect(width, height, size);
+            f.render_widget(ratatui::widgets::Clear, area);
+            let block = Block::default()
+                .title(title)
+                .borders(Borders::ALL)
+                .border_set(border::ROUNDED)
+                .padding(ratatui::widgets::Padding::horizontal(1))
+                .border_style(Style::default().fg(self.theme.accent));
+            f.render_widget(Paragraph::new(text_lines).block(block), area);
+        }
+    }
+
+    /// 快速录入实时解析预览（标题 / 标签 / 时间 / 循环 / 优先级）。
+    fn capture_preview_lines(&self) -> Vec<Line<'static>> {
+        let parsed = parse_quick_add(&self.input);
+        let tokens = tokenize_quick_add(&self.input);
+        let mut text_lines: Vec<Line> = Vec::new();
+        if !parsed.title.is_empty() {
+            text_lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, " 标题: ", " Title: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::raw(parsed.title.clone()),
+            ]));
+        }
+        if !parsed.tags.is_empty() {
+            let mut spans = vec![Span::styled(
+                crate::tr!(self.lang, " 标签: ", " Tags: "),
+                Style::default().fg(self.theme.text_dim),
+            )];
+            for (i, tag) in parsed.tags.iter().enumerate() {
+                spans.push(Span::styled(
+                    format!("@{}", tag),
+                    Style::default()
+                        .fg(self.theme.hl_fg)
+                        .add_modifier(Modifier::BOLD),
+                ));
+                if i + 1 < parsed.tags.len() {
+                    spans.push(Span::raw(" "));
+                }
+            }
+            text_lines.push(Line::from(spans));
+        }
+        if let Some(ref ts) = parsed.time_str {
+            let (resolved_text, resolved_style) = match time::parse_time(ts) {
+                Ok(ms) => (
+                    time::format_local(Some(ms)),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Err(_) => (
+                    crate::tr!(self.lang, "[无效]", "[invalid]").to_string(),
+                    Style::default().fg(self.theme.text_urgent),
+                ),
+            };
+            text_lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, " 时间: ", " Time: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    format!("~{}", ts),
+                    Style::default().fg(self.theme.text_success),
+                ),
+                Span::raw(" → "),
+                Span::styled(resolved_text, resolved_style),
+            ]));
+        }
+        if let Some(raw) = tokens
+            .iter()
+            .rev()
+            .find(|t| t.kind == QuickAddKind::Rrule)
+            .map(|t| t.text[1..].to_string())
+        {
+            let resolved = parse_rrule_shorthand(&raw);
+            text_lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, " 循环: ", " Rrule: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    format!("*{}", raw),
+                    Style::default().fg(self.theme.rrule_fg),
+                ),
+                Span::raw(" → "),
+                Span::styled(resolved, Style::default().fg(self.theme.text_dim)),
+            ]));
+        }
+        if let Some(p) = &parsed.priority {
+            let letter = priority_letter(p).unwrap_or('?');
+            let color = crate::tui::ui::priority_color(p).unwrap_or(self.theme.hl_fg);
+            text_lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, " 优先级: ", " Priority: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    format!("!{}", letter),
+                    Style::default().fg(self.theme.text_success),
+                ),
+                Span::raw(" → "),
+                Span::styled(format!("@{}", p), Style::default().fg(color)),
+            ]));
+        }
+        text_lines
+    }
+
+    /// 弹出框：今日任务概览 / 任务到期提醒。
+    fn render_popups(&mut self, f: &mut Frame, size: Rect) {
+        let Some(ref popup) = self.popup else { return };
+        match popup {
+            crate::tui::app::Popup::TodayTasks(tasks) => {
+                let mut lines = vec![Line::from(crate::tr!(
+                    self.lang,
+                    "今日有以下任务需要完成:",
+                    "Tasks to complete today:"
+                ))];
+                lines.push(Line::from(""));
+                for t in tasks.iter().take(10) {
+                    lines.push(Line::from(format!(" - {}", t)));
+                }
+                if tasks.len() > 10 {
+                    lines.push(Line::from(crate::tr!(
+                        self.lang,
+                        "   ... 等 {} 个任务",
+                        "   ... and {} more",
+                        tasks.len()
+                    )));
+                }
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    crate::tr!(
+                        self.lang,
+                        " [按 Enter 或 Esc 键关闭] ",
+                        " [Press Enter or Esc to close] "
+                    ),
+                    Style::default().fg(self.theme.text_dim),
+                )));
+
+                let area = self.centered_rect(50, 15, size);
+                f.render_widget(ratatui::widgets::Clear, area);
+                let block = Block::default()
+                    .title(crate::tr!(
+                        self.lang,
+                        " 📅 今日任务概览 ",
+                        " 📅 Today's Tasks "
+                    ))
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .border_style(Style::default().fg(self.theme.accent));
+                f.render_widget(
+                    Paragraph::new(lines)
+                        .block(block)
+                        .alignment(Alignment::Center),
+                    area,
+                );
+            }
+            crate::tui::app::Popup::TaskDueNow(_, title) => {
+                let mut lines = vec![Line::from(crate::tr!(
+                    self.lang,
+                    "有任务已到期，需要立即处理：",
+                    "A task is due now, handle it now:"
+                ))];
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!(" 「{}」 ", title),
+                    Style::default()
+                        .fg(self.theme.text_urgent)
+                        .add_modifier(Modifier::BOLD),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    crate::tr!(
+                        self.lang,
+                        " [Enter] 一键进入番茄钟  |  [Esc] 忽略 ",
+                        " [Enter] start pomodoro  |  [Esc] dismiss "
+                    ),
+                    Style::default().fg(self.theme.text_dim),
+                )));
+
+                let area = self.centered_rect(50, 10, size);
+                f.render_widget(ratatui::widgets::Clear, area);
+                let block = Block::default()
+                    .title(crate::tr!(self.lang, " ⏰ 任务提醒! ", " ⏰ Task due! "))
+                    .borders(Borders::ALL)
+                    .border_set(border::ROUNDED)
+                    .border_style(Style::default().fg(self.theme.text_urgent));
+                f.render_widget(
+                    Paragraph::new(lines)
+                        .block(block)
+                        .alignment(Alignment::Center),
+                    area,
+                );
+            }
+        }
+    }
+
+    /// 专注模式的圆形进度环 Canvas（点阵图案 + 外围刻度）。
+    fn render_focus_ring(
+        &self,
+        f: &mut Frame,
+        canvas_area: Rect,
+        elapsed_fraction: f64,
+        ring_color: Color,
+        dim_color: Color,
+        bg_color: Color,
+    ) {
+        let cw = canvas_area.width as f64;
+        let ch = canvas_area.height as f64;
+        let y_range = (100.0 * ch * 2.0 / cw).max(10.0);
+        let cx_c = 50.0_f64;
+        let cy_c = y_range / 2.0;
+        let max_r = cy_c.min(50.0) * 0.88;
+        let outer_r = max_r;
+        let inner_r = max_r * 0.68;
+
+        let ef = elapsed_fraction;
+        let rc = ring_color;
+        let dc = dim_color;
+        let bgc = bg_color;
+
+        let canvas = Canvas::default()
+            .marker(ratatui::symbols::Marker::Braille)
+            .x_bounds([0.0, 100.0])
+            .y_bounds([0.0, y_range])
+            .background_color(bgc)
+            .paint(move |ctx| {
+                let steps = 1440_usize;
+                let ring_steps = ((outer_r - inner_r) * 3.0) as usize + 1;
+
+                let mut rem_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+                let mut ela_pts: Vec<(f64, f64)> = Vec::with_capacity(steps * ring_steps);
+
+                for i in 0..steps {
+                    let angle_deg = i as f64 * 360.0 / steps as f64;
+                    let angle_rad = (90.0_f64 - angle_deg).to_radians();
+                    let frac = angle_deg / 360.0;
+
+                    for ri in 0..=ring_steps {
+                        let r = inner_r + ri as f64 * (outer_r - inner_r) / ring_steps as f64;
+                        let x = cx_c + r * angle_rad.cos();
+                        let y = cy_c + r * angle_rad.sin();
+                        if !(0.5..=99.5).contains(&x) || y < 0.5 || y > y_range - 0.5 {
+                            continue;
+                        }
+                        if frac >= ef {
+                            rem_pts.push((x, y));
+                        } else {
+                            ela_pts.push((x, y));
+                        }
+                    }
+                }
+                ctx.draw(&Points {
+                    coords: &ela_pts,
+                    color: dc,
+                });
+                ctx.draw(&Points {
+                    coords: &rem_pts,
+                    color: rc,
+                });
+
+                // 外围刻度点
+                let mut tick_pts = vec![];
+                for t in 0..12 {
+                    let deg = t as f64 * 30.0;
+                    let rad = (90.0_f64 - deg).to_radians();
+                    for ri in 0..=3 {
+                        let r = outer_r + 2.0 + ri as f64 * 0.8;
+                        let x = cx_c + r * rad.cos();
+                        let y = cy_c + r * rad.sin();
+                        tick_pts.push((x, y));
+                    }
+                }
+                ctx.draw(&Points {
+                    coords: &tick_pts,
+                    color: Color::Rgb(85, 85, 85),
+                });
+            });
+        f.render_widget(canvas, canvas_area);
+    }
+
+    /// 语法说明面板的行内容。
+    fn syntax_lines(&self) -> Vec<Line<'static>> {
+        vec![
             Line::from(Span::styled(
                 crate::tr!(
                     self.lang,
@@ -1149,34 +1412,11 @@ impl<'a> AppRender for App<'a> {
                     " to toggle this guide"
                 )),
             ]),
-        ];
-        let para = Paragraph::new(syntax)
-            .block(syntax_block)
-            .wrap(ratatui::widgets::Wrap { trim: false });
-        f.render_widget(para, area);
+        ]
     }
 
-    fn centered_rect(&self, percent_x: u16, height: u16, r: Rect) -> Rect {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(r.height.saturating_sub(height) / 2),
-                Constraint::Length(height),
-                Constraint::Min(0),
-            ])
-            .split(r);
-
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ])
-            .split(popup_layout[1])[1]
-    }
-
-    fn render_guide(&self, f: &mut ratatui::Frame, area: Rect) {
+    /// 左侧引导栏内容：视图分组 + 动态快捷键（按剩余行数截断）。
+    fn guide_lines(&self, area: Rect) -> Vec<Line<'static>> {
         let mut lines: Vec<Line> = Vec::new();
 
         if self.total_count() == 0 {
@@ -1338,432 +1578,256 @@ impl<'a> AppRender for App<'a> {
             }
         }
 
-        let border_color = if self.pane == Pane::Left {
-            self.theme.accent
-        } else {
-            self.theme.text_dim
-        };
-        f.render_widget(
-            Paragraph::new(lines).block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(border_color))
-                    .title(crate::tr!(self.lang, " 引导 ", " Guide ")),
+        lines
+    }
+
+    /// 详情面板内容行。
+    fn detail_lines(&self, d: &super::app::DetailData, width: u16) -> Vec<Line<'static>> {
+        let mut lines: Vec<Line> = vec![];
+
+        // 标题
+        lines.push(Line::from(vec![
+            Span::styled(
+                crate::tr!(self.lang, "标题: ", "Title: "),
+                Style::default()
+                    .fg(self.theme.text_dim)
+                    .add_modifier(Modifier::BOLD),
             ),
-            area,
-        );
-    }
+            Span::styled(
+                d.task.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+        ]));
 
-    fn render_list(&mut self, f: &mut ratatui::Frame, area: Rect) {
-        let border_color = if self.pane == Pane::Center {
-            self.theme.accent
-        } else {
-            self.theme.text_dim
-        };
-        let items = build_list_items(self);
-        let title = crate::tr!(
-            self.lang,
-            " 任务 · {}{} ",
-            " Tasks · {}{} ",
-            super::view_label(self.lang, self.view),
-            if let Some(ref tf) = self.tag_filter {
-                format!(" [@{}]", tf)
-            } else {
-                String::new()
-            }
-        );
-        let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .border_set(border::ROUNDED)
-                    .padding(ratatui::widgets::Padding::horizontal(1))
-                    .border_style(Style::default().fg(border_color))
-                    .title(title),
-            )
-            .highlight_style(if self.theme.is_dark {
-                // 暗色主题：活动行深蓝背景（与标签亮蓝区分），不覆盖任务文本原色。
-                if self.pane == Pane::Center {
-                    Style::default().bg(self.theme.row_active_bg)
-                } else {
-                    Style::default().bg(self.theme.hl_bg)
-                }
-            } else if self.pane == Pane::Center {
-                Style::default()
-                    .bg(self.theme.hl_bg)
-                    .fg(self.theme.hl_fg)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().bg(self.theme.hl_bg)
-            });
-        f.render_stateful_widget(list, area, &mut self.list_state);
-    }
-
-    fn render_detail(&mut self, f: &mut ratatui::Frame, area: ratatui::layout::Rect) {
-        f.render_widget(ratatui::widgets::Clear, area);
-        let border_color = if self.pane == Pane::Right {
-            self.theme.accent
-        } else {
-            self.theme.text_dim
-        };
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_set(border::ROUNDED)
-            .padding(ratatui::widgets::Padding::horizontal(1))
-            .border_style(Style::default().fg(border_color))
-            .title(crate::tr!(self.lang, " 任务详情 ", " Task Details "));
-
-        match &self.detail {
-            None => {
-                let empty_para = Paragraph::new(crate::tr!(
-                    self.lang,
-                    "\n\n󰋔\n\n未选中任务",
-                    "\n\n󰋔\n\nNo task selected"
-                ))
-                .alignment(Alignment::Center)
-                .style(
-                    Style::default()
-                        .fg(self.theme.text_dim)
-                        .add_modifier(Modifier::ITALIC),
-                )
-                .block(block);
-                f.render_widget(empty_para, area);
-            }
-            Some(d) => {
-                let mut lines: Vec<Line> = vec![];
-
-                // 标题
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        crate::tr!(self.lang, "标题: ", "Title: "),
-                        Style::default()
-                            .fg(self.theme.text_dim)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(
-                        d.task.title.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-
-                // 状态 / 归档（归档任务只展示原因与时间，不再显示已完成/逾期）
-                if let Some(reason) = &d.task.archive_reason {
-                    let reason_cn = match reason.as_str() {
-                        "completed" => crate::tr!(self.lang, "[完成]", "[Done]"),
-                        "deleted" => crate::tr!(self.lang, "[删除]", "[Deleted]"),
-                        _ => crate::tr!(self.lang, "[归档]", "[Archived]"),
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "归档: ", "Archived: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::styled(
-                            format!("{} {}", reason_cn, time::format_local(d.task.archived_at)),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                    ]));
-                } else {
-                    let st_color = ui::status_color(&d.task.status);
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "状态: ", "Status: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::styled(
-                            status_cn(self.lang, d.task.status),
-                            Style::default().fg(st_color).add_modifier(Modifier::BOLD),
-                        ),
-                    ]));
-                }
-
-                // 截止时间
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        crate::tr!(self.lang, "截止: ", "Due: "),
-                        Style::default().fg(self.theme.text_dim),
-                    ),
-                    Span::raw(time::format_local(d.task.due_at)),
-                ]));
-
-                // 计划时间：具体时间显示排程起点；循环任务显示最近一次计划执行日期
-                if d.task.scheduled_start_at.is_some()
-                    || d.task.scheduled_end_at.is_some()
-                    || (d.task.rrule.is_some()
-                        && (d.task.scheduled_start_at.is_some() || d.task.due_at.is_some()))
-                {
-                    let planned = if d.task.rrule.is_some() {
-                        // 循环任务：错过 slot 取最近一次已错过（逾期），否则下一次执行
-                        match crate::commands::effective_due(&d.task) {
-                            Some(ms) => time::format_local(Some(ms)),
-                            None => "-".to_string(),
-                        }
-                    } else {
-                        match d.task.scheduled_end_at {
-                            Some(_) => format!(
-                                "{} -> {}",
-                                time::format_local(d.task.scheduled_start_at),
-                                time::format_local(d.task.scheduled_end_at)
-                            ),
-                            None => time::format_local(d.task.scheduled_start_at),
-                        }
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "计划: ", "Planned: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::raw(planned),
-                    ]));
-                }
-
-                // 循环规则
-                if let Some(rr) = &d.task.rrule {
-                    let shown_rr = if self.lang.is_zh() {
-                        rr.replace("FREQ=DAILY", "每天")
-                            .replace("FREQ=WEEKLY", "每周")
-                            .replace("FREQ=MONTHLY", "每月")
-                            .replace("INTERVAL=", "间隔=")
-                            .replace("COUNT=", "次数=")
-                            .replace("UNTIL=", "直到=")
-                    } else {
-                        rr.clone()
-                    };
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "循环: ", "Rrule: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::raw(shown_rr),
-                    ]));
-                }
-
-                // 标签
-                if !d.tags.is_empty() {
-                    let mut tag_spans = vec![Span::styled(
-                        crate::tr!(self.lang, "标签: ", "Tags: "),
-                        Style::default().fg(self.theme.text_dim),
-                    )];
-                    for (i, tg) in d.tags.iter().enumerate() {
-                        let c = ui::priority_color(&tg.name).unwrap_or(self.theme.hl_fg);
-                        tag_spans.push(Span::styled(
-                            format!("@{}", tg.name),
-                            Style::default().fg(c),
-                        ));
-                        if i < d.tags.len() - 1 {
-                            tag_spans.push(Span::raw(" "));
-                        }
-                    }
-                    lines.push(Line::from(tag_spans));
-                }
-
-                // 委派
-                if let Some(del) = &d.task.delegated_to {
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "委派: ", "Delegated: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::raw(del.clone()),
-                    ]));
-                }
-
-                // 检查单
-                if !d.task.checklist.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        crate::tr!(self.lang, "检查单:", "Checklist:"),
-                        Style::default().fg(self.theme.text_dim),
-                    )));
-                    for item in &d.task.checklist {
-                        let check = if item.done { "[x]" } else { "[ ]" };
-                        let c = if item.done {
-                            self.theme.text_success
-                        } else {
-                            self.theme.text_dim
-                        };
-                        lines.push(Line::from(Span::styled(
-                            format!("  {} {}", check, item.title),
-                            Style::default().fg(c),
-                        )));
-                    }
-                }
-
-                // 番茄钟计数
-                let pomo_count = d
-                    .events
-                    .iter()
-                    .filter(|e| e.event_type == event::EV_POMODORO)
-                    .count();
-                if pomo_count > 0 {
-                    let tomatoes = " ".repeat(pomo_count);
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            crate::tr!(self.lang, "专注: ", "Focus: "),
-                            Style::default().fg(self.theme.text_dim),
-                        ),
-                        Span::styled(
-                            format!("{} ({})", tomatoes, pomo_count),
-                            Style::default().fg(self.theme.text_urgent),
-                        ),
-                    ]));
-                }
-
-                // 分隔线
-                lines.push(Line::from(
-                    "─".repeat((area.width.saturating_sub(4)) as usize),
-                ));
-
-                // 备注
-                if d.task.notes.trim().is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        crate::tr!(self.lang, "备注: -", "Notes: -"),
-                        Style::default().fg(self.theme.text_dim),
-                    )));
-                } else {
-                    lines.push(Line::from(Span::styled(
-                        crate::tr!(self.lang, "备注:", "Notes:"),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )));
-                    for ln in d.task.notes.split('\n') {
-                        lines.push(Line::from(format!("  {}", ln)));
-                    }
-                }
-
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    crate::tr!(self.lang, "时间线", "Timeline"),
-                    Style::default().add_modifier(Modifier::UNDERLINED),
-                )));
-                for e in d.events.iter().rev().take(6).rev() {
-                    let event_cn = match e.event_type.as_str() {
-                        "created" => crate::tr!(self.lang, "创建", "created"),
-                        "status_change" => crate::tr!(self.lang, "流转", "changed"),
-                        event::EV_COMPLETED => crate::tr!(self.lang, "完成", "completed"),
-                        event::EV_ARCHIVED => crate::tr!(self.lang, "归档", "archived"),
-                        event::EV_POMODORO => crate::tr!(self.lang, "专注", "focus"),
-                        event::EV_HABIT_COMPLETED => crate::tr!(self.lang, "习惯", "habit"),
-                        event::EV_RESTORED => crate::tr!(self.lang, "恢复", "restored"),
-                        _ => &e.event_type,
-                    };
-
-                    let from_cn = e
-                        .from_status
-                        .as_deref()
-                        .unwrap_or("-")
-                        .parse::<crate::model::task::Status>()
-                        .map(|s| status_cn(self.lang, s))
-                        .unwrap_or("-");
-                    let to_cn = e
-                        .to_status
-                        .as_deref()
-                        .unwrap_or("-")
-                        .parse::<crate::model::task::Status>()
-                        .map(|s| status_cn(self.lang, s))
-                        .unwrap_or("-");
-
-                    let action = if e.event_type == "status_change" {
-                        format!("{} -> {}", from_cn, to_cn)
-                    } else if e.event_type == event::EV_POMODORO {
-                        "🍅 +1".to_string()
-                    } else {
-                        "".to_string()
-                    };
-
-                    lines.push(Line::from(format!(
-                        "  {} {} {}",
-                        time::format_local(Some(e.at)),
-                        event_cn,
-                        action
-                    )));
-                }
-
-                let para = Paragraph::new(lines)
-                    .block(block)
-                    .wrap(ratatui::widgets::Wrap { trim: false });
-                f.render_widget(para, area);
-            }
-        }
-    }
-}
-
-// ── 大数字字体辅助（5 行 × 4 列，纯 █ 字符）──
-
-fn big_digit_rows(c: char, blink: bool) -> [&'static str; 5] {
-    match c {
-        '0' => [" ██ ", "█  █", "█  █", "█  █", " ██ "],
-        '1' => [" ▐█ ", " ██ ", "  █ ", "  █ ", " ███"],
-        '2' => [" ██ ", "   █", " ██ ", "█   ", "████"],
-        '3' => ["███ ", "   █", " ██ ", "   █", "███ "],
-        '4' => ["█  █", "█  █", "████", "   █", "   █"],
-        '5' => ["████", "█   ", "███ ", "   █", "███ "],
-        '6' => [" ██ ", "█   ", "███ ", "█  █", " ██ "],
-        '7' => ["████", "   █", "  █ ", " █  ", " █  "],
-        '8' => [" ██ ", "█  █", " ██ ", "█  █", " ██ "],
-        '9' => [" ██ ", "█  █", " ███", "   █", " ██ "],
-        ':' if blink => ["    ", " ██ ", "    ", " ██ ", "    "],
-        ':' => ["    ", "    ", "    ", "    ", "    "],
-        _ => ["    ", "    ", "    ", "    ", "    "],
-    }
-}
-
-/// 将形如 "23:45" 的字符串渲染为 5 行大数字（每行是一个 Span）。
-fn build_big_time(s: &str, color: Color, bg: Color, blink: bool) -> Vec<Line<'static>> {
-    let chars: Vec<char> = s.chars().collect();
-    let mut rows: [String; 5] = Default::default();
-    for &c in &chars {
-        let digit = big_digit_rows(c, blink);
-        for (i, part) in digit.iter().enumerate() {
-            rows[i].push_str(part);
-            rows[i].push(' '); // 字符间距
-        }
-    }
-    rows.into_iter()
-        .map(|row| {
-            Line::from(Span::styled(
-                row,
-                Style::default()
-                    .fg(color)
-                    .bg(bg)
-                    .add_modifier(Modifier::BOLD),
-            ))
-        })
-        .collect()
-}
-
-impl<'a> App<'a> {
-    fn capture_input_line(&self) -> Line<'a> {
-        let input = &self.input;
-        let mut spans: Vec<Span<'a>> = Vec::new();
-        spans.push(Span::raw(" "));
-        let mut prev = 0usize;
-        for tok in tokenize_quick_add(input) {
-            if tok.start > prev {
-                spans.push(Span::raw(input[prev..tok.start].to_string()));
-            }
-            let style = match tok.kind {
-                QuickAddKind::Tag => Style::default()
-                    .fg(self.theme.hl_fg)
-                    .add_modifier(Modifier::BOLD),
-                QuickAddKind::Time => Style::default().fg(self.theme.text_success),
-                QuickAddKind::Rrule => Style::default().fg(self.theme.rrule_fg),
-                QuickAddKind::Priority => {
-                    let tag =
-                        crate::parser::priority_tag(&input[tok.start + 1..tok.end]).unwrap_or("");
-                    Style::default()
-                        .fg(crate::tui::ui::priority_color(tag).unwrap_or(self.theme.hl_fg))
-                        .add_modifier(Modifier::BOLD)
-                }
-                QuickAddKind::Title => Style::default(),
+        // 状态 / 归档（归档任务只展示原因与时间，不再显示已完成/逾期）
+        if let Some(reason) = &d.task.archive_reason {
+            let reason_cn = match reason.as_str() {
+                "completed" => crate::tr!(self.lang, "[完成]", "[Done]"),
+                "deleted" => crate::tr!(self.lang, "[删除]", "[Deleted]"),
+                _ => crate::tr!(self.lang, "[归档]", "[Archived]"),
             };
-            spans.push(Span::styled(input[tok.start..tok.end].to_string(), style));
-            prev = tok.end;
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "归档: ", "Archived: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    format!("{} {}", reason_cn, time::format_local(d.task.archived_at)),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+            ]));
+        } else {
+            let st_color = ui::status_color(&d.task.status);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "状态: ", "Status: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    status_cn(self.lang, d.task.status),
+                    Style::default().fg(st_color).add_modifier(Modifier::BOLD),
+                ),
+            ]));
         }
-        if prev < input.len() {
-            spans.push(Span::raw(input[prev..].to_string()));
+
+        // 截止时间
+        lines.push(Line::from(vec![
+            Span::styled(
+                crate::tr!(self.lang, "截止: ", "Due: "),
+                Style::default().fg(self.theme.text_dim),
+            ),
+            Span::raw(time::format_local(d.task.due_at)),
+        ]));
+
+        // 计划时间：具体时间显示排程起点；循环任务显示最近一次计划执行日期
+        if d.task.scheduled_start_at.is_some()
+            || d.task.scheduled_end_at.is_some()
+            || (d.task.rrule.is_some()
+                && (d.task.scheduled_start_at.is_some() || d.task.due_at.is_some()))
+        {
+            let planned = if d.task.rrule.is_some() {
+                // 循环任务：错过 slot 取最近一次已错过（逾期），否则下一次执行
+                match crate::commands::effective_due(&d.task) {
+                    Some(ms) => time::format_local(Some(ms)),
+                    None => "-".to_string(),
+                }
+            } else {
+                match d.task.scheduled_end_at {
+                    Some(_) => format!(
+                        "{} -> {}",
+                        time::format_local(d.task.scheduled_start_at),
+                        time::format_local(d.task.scheduled_end_at)
+                    ),
+                    None => time::format_local(d.task.scheduled_start_at),
+                }
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "计划: ", "Planned: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::raw(planned),
+            ]));
         }
-        spans.push(Span::raw("_"));
-        Line::from(spans)
+
+        // 循环规则
+        if let Some(rr) = &d.task.rrule {
+            let shown_rr = if self.lang.is_zh() {
+                rr.replace("FREQ=DAILY", "每天")
+                    .replace("FREQ=WEEKLY", "每周")
+                    .replace("FREQ=MONTHLY", "每月")
+                    .replace("INTERVAL=", "间隔=")
+                    .replace("COUNT=", "次数=")
+                    .replace("UNTIL=", "直到=")
+            } else {
+                rr.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "循环: ", "Rrule: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::raw(shown_rr),
+            ]));
+        }
+
+        // 标签
+        if !d.tags.is_empty() {
+            let mut tag_spans = vec![Span::styled(
+                crate::tr!(self.lang, "标签: ", "Tags: "),
+                Style::default().fg(self.theme.text_dim),
+            )];
+            for (i, tg) in d.tags.iter().enumerate() {
+                let c = ui::priority_color(&tg.name).unwrap_or(self.theme.hl_fg);
+                tag_spans.push(Span::styled(
+                    format!("@{}", tg.name),
+                    Style::default().fg(c),
+                ));
+                if i < d.tags.len() - 1 {
+                    tag_spans.push(Span::raw(" "));
+                }
+            }
+            lines.push(Line::from(tag_spans));
+        }
+
+        // 委派
+        if let Some(del) = &d.task.delegated_to {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "委派: ", "Delegated: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::raw(del.clone()),
+            ]));
+        }
+
+        // 检查单
+        if !d.task.checklist.is_empty() {
+            lines.push(Line::from(Span::styled(
+                crate::tr!(self.lang, "检查单:", "Checklist:"),
+                Style::default().fg(self.theme.text_dim),
+            )));
+            for item in &d.task.checklist {
+                let check = if item.done { "[x]" } else { "[ ]" };
+                let c = if item.done {
+                    self.theme.text_success
+                } else {
+                    self.theme.text_dim
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {} {}", check, item.title),
+                    Style::default().fg(c),
+                )));
+            }
+        }
+
+        // 番茄钟计数
+        let pomo_count = d
+            .events
+            .iter()
+            .filter(|e| e.event_type == event::EV_POMODORO)
+            .count();
+        if pomo_count > 0 {
+            let tomatoes = " ".repeat(pomo_count);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    crate::tr!(self.lang, "专注: ", "Focus: "),
+                    Style::default().fg(self.theme.text_dim),
+                ),
+                Span::styled(
+                    format!("{} ({})", tomatoes, pomo_count),
+                    Style::default().fg(self.theme.text_urgent),
+                ),
+            ]));
+        }
+
+        // 分隔线
+        lines.push(Line::from("─".repeat((width.saturating_sub(4)) as usize)));
+
+        // 备注
+        if d.task.notes.trim().is_empty() {
+            lines.push(Line::from(Span::styled(
+                crate::tr!(self.lang, "备注: -", "Notes: -"),
+                Style::default().fg(self.theme.text_dim),
+            )));
+        } else {
+            lines.push(Line::from(Span::styled(
+                crate::tr!(self.lang, "备注:", "Notes:"),
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+            for ln in d.task.notes.split('\n') {
+                lines.push(Line::from(format!("  {}", ln)));
+            }
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            crate::tr!(self.lang, "时间线", "Timeline"),
+            Style::default().add_modifier(Modifier::UNDERLINED),
+        )));
+        for e in d.events.iter().rev().take(6).rev() {
+            let event_cn = match e.event_type.as_str() {
+                "created" => crate::tr!(self.lang, "创建", "created"),
+                "status_change" => crate::tr!(self.lang, "流转", "changed"),
+                event::EV_COMPLETED => crate::tr!(self.lang, "完成", "completed"),
+                event::EV_ARCHIVED => crate::tr!(self.lang, "归档", "archived"),
+                event::EV_POMODORO => crate::tr!(self.lang, "专注", "focus"),
+                event::EV_HABIT_COMPLETED => crate::tr!(self.lang, "习惯", "habit"),
+                event::EV_RESTORED => crate::tr!(self.lang, "恢复", "restored"),
+                _ => &e.event_type,
+            };
+
+            let from_cn = e
+                .from_status
+                .as_deref()
+                .unwrap_or("-")
+                .parse::<crate::model::task::Status>()
+                .map(|s| status_cn(self.lang, s))
+                .unwrap_or("-");
+            let to_cn = e
+                .to_status
+                .as_deref()
+                .unwrap_or("-")
+                .parse::<crate::model::task::Status>()
+                .map(|s| status_cn(self.lang, s))
+                .unwrap_or("-");
+
+            let action = if e.event_type == "status_change" {
+                format!("{} -> {}", from_cn, to_cn)
+            } else if e.event_type == event::EV_POMODORO {
+                "🍅 +1".to_string()
+            } else {
+                "".to_string()
+            };
+
+            lines.push(Line::from(format!(
+                "  {} {} {}",
+                time::format_local(Some(e.at)),
+                event_cn,
+                action
+            )));
+        }
+
+        lines
     }
 }

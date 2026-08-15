@@ -51,6 +51,14 @@ macro_rules! tr {
         $(
             __s = __s.replacen("{}", &format!("{}", $arg), 1);
         )*
+        // 占位符与参数数量不匹配（或模板意外含字面 `{}`）时，测试（debug 构建）里立即暴露。
+        #[cfg(debug_assertions)]
+        debug_assert!(
+            !__s.contains("{}"),
+            "tr! 占位符与参数数量不匹配: zh=`{}`, en=`{}`",
+            $zh,
+            $en
+        );
         __s
     }};
 }

@@ -108,17 +108,19 @@ pub fn create_capture(conn: &Connection, input: &CaptureInput) -> Result<Task> {
 /// Resolve a task reference to its full id: exact match, else a unique id
 /// prefix (like git), else `TaskNotFound`.
 pub fn resolve_id(conn: &Connection, key: &str) -> Result<String> {
-    if get(conn, key).is_ok() {
-        return Ok(key.to_string());
-    }
-    let mut stmt = conn.prepare("SELECT id FROM tasks WHERE id LIKE ?1 || '%' LIMIT 2")?;
-    let mut rows = stmt.query_map([key], |r| r.get::<usize, String>(0))?;
-    let first = rows.next().transpose()?;
-    let second = rows.next().transpose()?;
-    match (first, second) {
-        (Some(id), None) => Ok(id),
-        (Some(_), Some(_)) => anyhow::bail!("ambiguous id prefix: {}", key),
-        (None, _) => Err(Error::TaskNotFound(key.to_string()).into()),
+    // 一次查询同时命中精确匹配与 id 前缀（精确匹配排在最前），避免先 `get` 再前缀查询两次往返。
+    let mut stmt = conn.prepare(
+        "SELECT id FROM tasks WHERE id = ?1 OR id LIKE ?1 || '%' \
+         ORDER BY (id = ?1) DESC LIMIT 2",
+    )?;
+    let rows = stmt.query_map([key], |r| r.get::<usize, String>(0))?;
+    let ids: Vec<String> = rows.collect::<rusqlite::Result<_>>()?;
+    match ids.as_slice() {
+        // 精确匹配优先：即使同时存在多个前缀命中，精确命中仍然胜出（git 语义）。
+        [first, ..] if first.as_str() == key => Ok(key.to_string()),
+        [first] => Ok(first.clone()),
+        [] => Err(Error::TaskNotFound(key.to_string()).into()),
+        _ => anyhow::bail!("ambiguous id prefix: {}", key),
     }
 }
 

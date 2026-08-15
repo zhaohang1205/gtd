@@ -42,7 +42,7 @@ fn command_in_path(name: &str) -> bool {
 /// GTD 的七个状态（数据层不变）。界面里只有 Inbox 和 Next 是“主视图”，
 /// 其余状态作为可折叠的“上下文分组”放在左侧引导栏，既保持可达，
 /// 又不会把前台铺得太满造成心理负担。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub(crate) enum View {
     Inbox,
     Today,
@@ -84,24 +84,6 @@ impl View {
             View::Reference => Some("reference"),
             View::Done => Some("done"),
             View::Today | View::Tomorrow | View::Review | View::Archived | View::Tags => None,
-        }
-    }
-
-    /// 固定索引，用于 `App.counts` 计数缓存数组。
-    pub(crate) fn idx(self) -> usize {
-        match self {
-            View::Inbox => 0,
-            View::Today => 1,
-            View::Tomorrow => 2,
-            View::Next => 3,
-            View::Waiting => 4,
-            View::Scheduled => 5,
-            View::Someday => 6,
-            View::Reference => 7,
-            View::Done => 8,
-            View::Review => 9,
-            View::Archived => 10,
-            View::Tags => 11,
         }
     }
 
@@ -229,7 +211,7 @@ pub(crate) struct App<'a> {
     pub(crate) last_tick_ms: i64,
     pub(crate) notified_events: std::collections::HashSet<String>,
     /// 各视图计数缓存：`refresh` 时一次性算好，渲染帧内零 DB 查询。
-    pub(crate) counts: [usize; 12],
+    pub(crate) counts: std::collections::HashMap<View, usize>,
     /// 循环任务展开结果缓存（task_id -> 发生序列）：一次刷新内每个循环规则只
     /// 展开一次，列表行与今日/明日视图复用，避免重复 `rrule_occurrences`。
     pub(crate) rrule_cache: std::collections::HashMap<String, Vec<i64>>,
@@ -291,7 +273,7 @@ impl<'a> App<'a> {
             popup: None,
             last_tick_ms: 0,
             notified_events: std::collections::HashSet::new(),
-            counts: [0; 12],
+            counts: std::collections::HashMap::new(),
             rrule_cache: std::collections::HashMap::new(),
             pomo: crate::repo::pomodoro::get_state().unwrap_or_default(),
             pomo_loaded_ms: 0,
@@ -413,6 +395,18 @@ impl<'a> App<'a> {
         }
     }
 
+    /// 执行用户触发的操作：失败时把错误写入状态栏并返回 `false`，供调用方据此
+    /// 跳过后续成功提示（避免错误被成功文案覆盖），而不是静默吞掉。
+    pub(crate) fn note<T>(&mut self, r: anyhow::Result<T>) -> bool {
+        match r {
+            Ok(_) => true,
+            Err(e) => {
+                self.status_message = format!("err: {}", e);
+                false
+            }
+        }
+    }
+
     pub(crate) fn switch_to_english_ime(&self) {
         // 探测结果缓存于 OnceLock：仅首次按 PATH 检测（不 spawn 进程），之后每次
         // 切换只执行命中的那一个 helper，避免反复 spawn 多个外部进程去探测。
@@ -462,11 +456,14 @@ impl<'a> App<'a> {
     }
 
     pub(crate) fn total_count(&self) -> usize {
-        STATUS_VIEWS.iter().map(|v| self.counts[v.idx()]).sum()
+        STATUS_VIEWS
+            .iter()
+            .map(|v| self.counts.get(v).copied().unwrap_or(0))
+            .sum()
     }
 
     pub(crate) fn context_count(&self, v: View) -> usize {
-        self.counts[v.idx()]
+        self.counts.get(&v).copied().unwrap_or(0)
     }
 
     /// 从已经一次性取出的 `all`（未归档、含标签/搜索过滤）里算出今日/明日列表。
@@ -580,8 +577,8 @@ impl<'a> App<'a> {
         )?;
 
         let (today, tomorrow) = self.day_lists_from(&all, &checked_today);
-        self.counts[View::Today.idx()] = today.len();
-        self.counts[View::Tomorrow.idx()] = tomorrow.len();
+        self.counts.insert(View::Today, today.len());
+        self.counts.insert(View::Tomorrow, tomorrow.len());
         self.refresh_counts()?;
 
         // 标签视图单独构建行（没有任务主体）。
@@ -676,9 +673,10 @@ impl<'a> App<'a> {
 
     /// 一次算好所有视图计数（除今日/明日已在 `refresh` 中赋值），渲染时零查询。
     fn refresh_counts(&mut self) -> Result<()> {
-        self.counts[View::Review.idx()] = 0;
-        self.counts[View::Archived.idx()] = tasks::count_archived(self.conn)?;
-        self.counts[View::Tags.idx()] = tags::count_tags(self.conn)?;
+        self.counts.insert(View::Review, 0);
+        self.counts
+            .insert(View::Archived, tasks::count_archived(self.conn)?);
+        self.counts.insert(View::Tags, tags::count_tags(self.conn)?);
         let query = if self.search_query.is_empty() {
             None
         } else {
@@ -687,7 +685,8 @@ impl<'a> App<'a> {
         let by_status = tasks::count_by_status(self.conn, query)?;
         for v in STATUS_VIEWS {
             let s = v.status().expect("status view");
-            self.counts[v.idx()] = by_status.get(s).copied().unwrap_or(0);
+            self.counts
+                .insert(v, by_status.get(s).copied().unwrap_or(0));
         }
         Ok(())
     }
